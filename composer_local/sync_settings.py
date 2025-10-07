@@ -1,4 +1,3 @@
-# Copyright 2022 Google LLC
 # Copyright 2025 Hirohiko Nakui
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
