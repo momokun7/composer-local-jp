@@ -1,10 +1,10 @@
 name: Security Checks
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
   schedule:
     # 毎週月曜日の午前9時（JST）に実行
     - cron: '0 0 * * 1'
