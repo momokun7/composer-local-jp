@@ -179,11 +179,36 @@ wait-ready:
 
 .PHONY: init-all
 init-all:
-	@uv run --active -- python -c "from composer_local import files, environment as env; p=files.resolve_environment_path('$(ENV)'); e=env.Environment.load_from_config(p, None); e.start()"
-	@$(MAKE) wait-ready
-	@$(MAKE) sync-vars
-	@$(MAKE) setup-connections
-	@$(MAKE) create-admin
+	@uv run --active -- python -c "from composer_local import files, environment as env; p=files.resolve_environment_path('$(ENV)'); e=env.Environment.load_from_config(p, None); e.start()" || \
+		(echo "" && \
+		 echo "==========================================" && \
+		 echo " 環境の起動に失敗しました！" && \
+		 echo "==========================================" && \
+		 echo "" && exit 1)
+	@$(MAKE) wait-ready || \
+		(echo "" && \
+		 echo "==========================================" && \
+		 echo " 環境の起動待機がタイムアウトしました！" && \
+		 echo "==========================================" && \
+		 echo "" && exit 1)
+	@$(MAKE) sync-vars || \
+		(echo "" && \
+		 echo "==========================================" && \
+		 echo " Variables の同期に失敗しました！" && \
+		 echo "==========================================" && \
+		 echo "" && exit 1)
+	@$(MAKE) setup-connections || \
+		(echo "" && \
+		 echo "==========================================" && \
+		 echo " 接続のセットアップに失敗しました！" && \
+		 echo "==========================================" && \
+		 echo "" && exit 1)
+	@$(MAKE) create-admin || \
+		(echo "" && \
+		 echo "==========================================" && \
+		 echo " 管理者ユーザーの作成に失敗しました！" && \
+		 echo "==========================================" && \
+		 echo "" && exit 1)
 	@$(MAKE) stop
 	@echo ""
 	@echo "=========================================="
@@ -248,17 +273,16 @@ logs:
 
 .PHONY: sync-vars
 sync-vars:
-	@if uv run --active -- python composer_local/export_composer_variables.py \
+	@uv run --active -- python composer_local/export_composer_variables.py \
 		--project $(PROJECT) \
 		--location $(LOCATION) \
 		--env-name $(ENV_NAME) \
-		--secret-id $(SECRET_ID); then \
-		uv run --active -- python composer_local/import_variables_to_local.py \
-			--project $(PROJECT) \
-			--secret-id $(SECRET_ID) \
-			--local-env-dir $(PWD)/composer/$(ENV) \
-			--airflow-url http://localhost:$(PORT); \
-	fi
+		--secret-id $(SECRET_ID) || exit 1
+	@uv run --active -- python composer_local/import_variables_to_local.py \
+		--project $(PROJECT) \
+		--secret-id $(SECRET_ID) \
+		--local-env-dir $(PWD)/composer/$(ENV) \
+		--airflow-url http://localhost:$(PORT) || exit 1
 
 .PHONY: setup-connections
 setup-connections:
