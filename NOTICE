@@ -1,0 +1,63 @@
+composer-local-jp
+
+Copyright 2022 Google LLC
+Copyright 2025 Hirohiko Nakui
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+================================================================================
+
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This project is derived from:
+
+composer-local-dev
+Copyright 2022 Google LLC
+https://github.com/GoogleCloudPlatform/composer-local-dev
+
+The following files are derived from the original project:
+- composer_local/__init__.py
+- composer_local/__main__.py
+- composer_local/cli.py
+- composer_local/console.py
+- composer_local/constants.py
+- composer_local/environment.py
+- composer_local/errors.py
+- composer_local/files.py
+- composer_local/utils.py
+- composer_local/version.py
+
+================================================================================
+
+MODIFICATIONS AND ADDITIONS
+
+This project has been modified from the original composer-local-dev to include:
+
+1. Japanese language support:
+   - Complete Japanese documentation (README.md)
+   - Japanese comments and error messages in code
+   - Japanese command descriptions
+
+2. New features added (files marked with Copyright 2025 Hirohiko Nakui):
+   - Secret Manager integration (secret_manager_sync.py)
+   - Automatic Variable synchronization (export_composer_variables.py, import_variables_to_local.py)
+   - Centralized configuration management (composer_settings.py, sync_settings.py)
+   - Makefile for simplified workflow automation
+
+3. Additional modifications:
+   - Modified CLI messages and error handling (cli.py, constants.py)
+   - Enhanced environment management features (environment.py)
+   - Japanese-optimized development workflows
+
+All modifications are Copyright 2025 Hirohiko Nakui and are licensed under
+the Apache License, Version 2.0.
