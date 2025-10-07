@@ -273,17 +273,16 @@ logs:
 
 .PHONY: sync-vars
 sync-vars:
-	@if uv run --active -- python composer_local/export_composer_variables.py \
+	@uv run --active -- python composer_local/export_composer_variables.py \
 		--project $(PROJECT) \
 		--location $(LOCATION) \
 		--env-name $(ENV_NAME) \
-		--secret-id $(SECRET_ID); then \
-		uv run --active -- python composer_local/import_variables_to_local.py \
-			--project $(PROJECT) \
-			--secret-id $(SECRET_ID) \
-			--local-env-dir $(PWD)/composer/$(ENV) \
-			--airflow-url http://localhost:$(PORT); \
-	fi
+		--secret-id $(SECRET_ID) || exit 1
+	@uv run --active -- python composer_local/import_variables_to_local.py \
+		--project $(PROJECT) \
+		--secret-id $(SECRET_ID) \
+		--local-env-dir $(PWD)/composer/$(ENV) \
+		--airflow-url http://localhost:$(PORT) || exit 1
 
 .PHONY: setup-connections
 setup-connections:
