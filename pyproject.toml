@@ -1,9 +1,10 @@
 [project]
-name = "analytics-etl-dags"
+name = "composer-local-jp"
 version = "0.1.0"
-description = ""
-authors = [{ name = "None" }]
+description = "Google Cloud Composer local development tool (Japanese optimized, derived from GoogleCloudPlatform/composer-local-dev)"
+authors = [{ name = "Hirohiko Nakui" }]
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11.8,<3.13"
 dependencies = [
     "apache-airflow==2.10.2",
