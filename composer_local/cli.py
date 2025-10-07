@@ -203,8 +203,7 @@ def create(
             database_engine=database_engine,
         )
     env.create()
-    print(f"{constants.ANSI_GREEN}環境の作成が完了しました。{constants.ANSI_RESET}")
-
+    print(f"{constants.ANSI_GREEN}環境のセットアップを実行しています...{constants.ANSI_RESET}")
 
 @cli.command()
 @optional_environment
