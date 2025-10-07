@@ -1,6 +1,6 @@
 # Composer Local JP
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![Airflow](https://img.shields.io/badge/Airflow-2.10.2-00C853?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/) [![Docker](https://img.shields.io/badge/Docker-required-2496ED?logo=docker&logoColor=white)](https://www.docker.com/) ![Make](https://img.shields.io/badge/Make-required-6D4C41?logo=gnu&logoColor=white) ![Google Cloud SDK](https://img.shields.io/badge/Google%20Cloud%20SDK-required-EA4335?logo=google-cloud&logoColor=white) ![uv](https://img.shields.io/badge/uv-required-DE5FE9?logo=astral&logoColor=white)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE) [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![Airflow](https://img.shields.io/badge/Airflow-2.10.2-00C853?logo=apache-airflow&logoColor=white)](https://airflow.apache.org/) [![Docker](https://img.shields.io/badge/Docker-required-2496ED?logo=docker&logoColor=white)](https://www.docker.com/) ![Make](https://img.shields.io/badge/Make-required-6D4C41?logo=gnu&logoColor=white) ![Google Cloud SDK](https://img.shields.io/badge/Google%20Cloud%20SDK-required-EA4335?logo=google-cloud&logoColor=white) ![uv](https://img.shields.io/badge/uv-required-DE5FE9?logo=astral&logoColor=white)
 
 Google Cloud Composer（Apache Airflow）のローカル開発環境を簡単に構築できる日本語対応ツールです。
 
@@ -12,7 +12,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を簡単に
 - **Composer 3 対応** - 最新の Airflow 2.10.2 + PostgreSQL
 - **uv による高速な依存関係管理**
 
-> 本プロジェクトは [GoogleCloudPlatform/composer-local-dev](https://github.com/GoogleCloudPlatform/composer-local-dev) を基に、日本語環境向けに最適化したものです。
+> 本プロジェクトは Google LLC の [GoogleCloudPlatform/composer-local-dev](https://github.com/GoogleCloudPlatform/composer-local-dev)（Apache License 2.0）を基に、日本語環境向けに最適化したものです。
 
 
 ---
@@ -188,9 +188,13 @@ make recreate
 
 ## ライセンス
 
-MIT License - 詳細は [LICENSE](LICENSE) をご覧ください。
+このプロジェクトは Apache License 2.0 でライセンスされています。詳細は [LICENSE](LICENSE) をご覧ください。
 
-本プロジェクトは [GoogleCloudPlatform/composer-local-dev](https://github.com/GoogleCloudPlatform/composer-local-dev) を基に作成されています。
+
+**元プロジェクト:**
+本プロジェクトは Google LLC の [composer-local-dev](https://github.com/GoogleCloudPlatform/composer-local-dev) を基に作成されています。
+
+詳細な帰属情報については [NOTICE](NOTICE) ファイルをご確認ください。
 
 ---
 
