@@ -61,9 +61,9 @@ define check_gcp_settings
 	fi
 endef
 
-# 環境の存在を確認（存在しなければエラー終了）
+# 環境の存在を確認（config.json の有無で判定、CLI を経由しないため高速）
 define check_env_exists
-	@if ! uv run --active -- composer-local describe $(ENV) > /dev/null 2>&1; then \
+	@if [ ! -f "composer/$(ENV)/config.json" ]; then \
 		echo ""; \
 		echo "=========================================="; \
 		echo " 環境が存在しません！"; \
@@ -190,10 +190,11 @@ create:
 
 start:
 	$(call check_env_exists)
-	@uv run --active -- composer-local start $(ENV)
+	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.start_foreground()"
 
 stop:
-	@uv run --active -- composer-local stop $(ENV) || (echo "停止に失敗しました。" && exit 1)
+	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.stop()" \
+		|| (echo "停止に失敗しました。" && exit 1)
 
 # =============================================================================
 # ターゲット: 環境管理
@@ -213,7 +214,7 @@ recreate:
 
 status:
 	$(call check_env_exists)
-	@uv run --active -- composer-local describe $(ENV)
+	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.describe()"
 
 logs:
 	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all)
