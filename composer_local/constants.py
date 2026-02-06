@@ -149,7 +149,6 @@ DOCKER_NOT_AVAILABLE_ERROR = (
 # メモリ制限は composer_settings.py から取得
 # DOCKER_CONTAINER_MEMORY_LIMIT = "4g"  # 削除: composer_settings.py から取得
 NOT_MODIFIABLE_ENVIRONMENT_VARIABLES = {"AIRFLOW_HOME"}
-STRICT_ENVIRONMENT_VARIABLES = {"AIRFLOW__CORE__EXECUTOR": ["LocalExecutor", "SequentialExecutor"]}
 LIST_COMMAND_EPILOG = (
     "\n詳細情報や潜在的な設定エラーを確認するには、環境名を指定して describe コマンドを実行してください。\n\n"
     "* 表示内容は環境設定ファイルの情報に基づきます。"
