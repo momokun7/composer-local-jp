@@ -136,3 +136,4 @@ dmypy.json
 # Composer Local Development (ignore all)
 composer/
 composer_local/composer_settings.py
+.make-settings.mk
