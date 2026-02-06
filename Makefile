@@ -28,8 +28,8 @@ ADMIN_LASTNAME  ?= $(_CS_AL)
 # =============================================================================
 
 .PHONY: help import create remove recreate start stop status logs \
-        sync-vars setup-connections create-admin sync-settings clean \
-        auth-user auth-sa wait-ready init-all
+        sync-vars sync-vars-sm setup-connections create-admin sync-settings \
+        clean auth-user auth-sa wait-ready init-all
 
 # =============================================================================
 # ヘルパー関数
@@ -151,7 +151,8 @@ help:
 	@echo "  auth-sa           GCP サービスアカウント認証（staging環境と同等の権限）"
 	@echo ""
 	@echo "  【Variables同期】"
-	@echo "  sync-vars         staging Composer → Secret Manager → ローカル Composer へVariablesを同期"
+	@echo "  sync-vars         staging Composer → ローカル Composer へVariablesを直接同期"
+	@echo "  sync-vars-sm      staging Composer → Secret Manager → ローカル Composer へVariablesを同期"
 	@echo ""
 	@echo "  【環境管理】"
 	@echo "  status            $(ENV) の設定とステータスを表示"
@@ -230,6 +231,13 @@ init-all:
 	$(call show_setup_complete)
 
 sync-vars:
+	@uv run --active -- python composer_local/sync_variables.py \
+		--project $(PROJECT) \
+		--location $(LOCATION) \
+		--env-name $(ENV_NAME) \
+		--local-env-dir $(PWD)/composer/$(ENV) || exit 1
+
+sync-vars-sm:
 	@uv run --active -- python composer_local/export_composer_variables.py \
 		--project $(PROJECT) \
 		--location $(LOCATION) \

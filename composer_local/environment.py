@@ -364,6 +364,18 @@ class Environment:
         self._copy_to_container(c, DOCKER_FILES / "run_as_user.sh")
         return c
 
+    def _auto_import_variables(self):
+        """variables.json が存在すれば Airflow にインポートし、インポート後に削除する。"""
+        variables_json_path = self.env_dir_path / "data" / "variables.json"
+        if variables_json_path.is_file():
+            self.run_airflow_command(
+                ["variables", "import", "/home/airflow/gcs/data/variables.json"]
+            )
+            try:
+                variables_json_path.unlink()
+            except Exception:
+                pass
+
     def start(self):
         self._assert_options()
         files.assert_dag_path_exists(self.dags_path)
@@ -376,21 +388,7 @@ class Environment:
         if app.status != constants.ContainerStatus.RUNNING:
             app.start()
         self._ensure_attached(net, app)
-        # Auto-import Variables from variables.json if present
-        variables_json_path = self.env_dir_path / "data" / "variables.json"
-        if variables_json_path.is_file():
-            self.run_airflow_command(
-                [
-                    "variables",
-                    "import",
-                    "/home/airflow/gcs/data/variables.json",
-                ]
-            )
-            # Remove temporary variables file after successful import
-            try:
-                variables_json_path.unlink()
-            except Exception:
-                pass
+        self._auto_import_variables()
 
         # Wait until webserver is reachable before printing the link
         self._wait_until_webserver_ready(
@@ -419,22 +417,7 @@ class Environment:
         if app.status != constants.ContainerStatus.RUNNING:
             app.start()
         self._ensure_attached(net, app)
-
-        # Auto-import Variables from variables.json if present
-        variables_json_path = self.env_dir_path / "data" / "variables.json"
-        if variables_json_path.is_file():
-            self.run_airflow_command(
-                [
-                    "variables",
-                    "import",
-                    "/home/airflow/gcs/data/variables.json",
-                ]
-            )
-            # Remove temporary variables file after successful import
-            try:
-                variables_json_path.unlink()
-            except Exception:
-                pass
+        self._auto_import_variables()
 
         # Wait until webserver is reachable before printing the link
         self._wait_until_webserver_ready(
