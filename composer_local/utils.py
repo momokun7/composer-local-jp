@@ -417,9 +417,4 @@ def setup_logging(verbose: bool, debug: bool):
 def resolve_project_id(project_id: Optional[str]) -> str:
     if project_id is not None:
         return project_id
-    LOG.info("プロジェクト ID が指定されていないため、Cloud CLI から取得します。")
-    try:
-        return get_project_id()
-    except errors.ComposerCliError:
-        LOG.info("gcloud の設定から project id を取得できませんでした。デフォルト値を使用します。")
-        return "local-dev"
+    return "local-dev"
