@@ -420,10 +420,6 @@ def resolve_project_id(project_id: Optional[str]) -> str:
     LOG.info("プロジェクト ID が指定されていないため、Cloud CLI から取得します。")
     try:
         return get_project_id()
-    except errors.ComposerCliError as err:
-        msg = (
-            "Google Cloud のプロジェクト ID を指定してください（'-p' / '--project'）。\n"
-            "gcloud の設定から project id を取得できませんでした:\n"
-            f"{err}"
-        )
-        raise click.UsageError(msg)
+    except errors.ComposerCliError:
+        LOG.info("gcloud の設定から project id を取得できませんでした。デフォルト値を使用します。")
+        return "local-dev"
