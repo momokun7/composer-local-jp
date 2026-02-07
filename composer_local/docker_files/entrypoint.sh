@@ -13,23 +13,48 @@ init_airflow() {
       $run_as_user /var/local/setup_python_command.sh
   fi
 
-  $run_as_user pip3 install --upgrade -r composer_requirements.txt
-  $run_as_user pip3 check
+  # uv がなければインストール（初回のみ、バイナリ直接DLで高速）
+  if ! command -v uv > /dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh 2>/dev/null \
+      || pip3 install --quiet uv
+  fi
 
-  airflow_version=$(${run_as_user} airflow version | grep -o "^[0-9\.]*")
+  # requirements が変更された場合のみインストールを実行
+  req_hash=$(md5sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1)
+  cached_hash=""
+  if [ -f /tmp/.composer_req_hash ]; then
+    cached_hash=$(cat /tmp/.composer_req_hash)
+  fi
+  if [ "$req_hash" != "$cached_hash" ]; then
+    $run_as_user uv pip install --system -r composer_requirements.txt
+    echo "$req_hash" > /tmp/.composer_req_hash
+  fi
 
-  original_ifs="$IFS"
-  IFS='.'
-  set -- $airflow_version
-  major="$1"
-  minor="$2"
-  patch="$3"
-  IFS="$original_ifs"
+  # airflow version を高速取得（airflow コマンドのフル import を回避）
+  airflow_version=$($run_as_user python3 -c "from importlib.metadata import version; print(version('apache-airflow'))" 2>/dev/null)
+  if [ -z "$airflow_version" ]; then
+    airflow_version=$(${run_as_user} airflow version | grep -o "^[0-9\.]*")
+  fi
 
-  if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
-    $run_as_user airflow db init
-  else
-    $run_as_user airflow db migrate
+  # db migrate はバージョン変更時のみ実行（2回目以降スキップで大幅高速化）
+  cached_db_version=""
+  if [ -f /tmp/.airflow_db_version ]; then
+    cached_db_version=$(cat /tmp/.airflow_db_version)
+  fi
+  if [ "$airflow_version" != "$cached_db_version" ]; then
+    original_ifs="$IFS"
+    IFS='.'
+    set -- $airflow_version
+    major="$1"
+    minor="$2"
+    IFS="$original_ifs"
+
+    if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
+      $run_as_user airflow db init
+    else
+      $run_as_user airflow db migrate
+    fi
+    echo "$airflow_version" > /tmp/.airflow_db_version
   fi
 
   # Do NOT override AUTH_ROLE_PUBLIC. Keep default auth; no public admin.

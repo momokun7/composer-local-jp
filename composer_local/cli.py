@@ -17,8 +17,7 @@ import rich.markdown
 
 from composer_local import composer_settings, console, constants
 from composer_local import environment as composer_environment
-from composer_local import errors, files, secret_manager_sync, utils, version
-from composer_local.sync_settings import sync_composer_settings
+from composer_local import errors, files, utils, version
 
 LOG = logging.getLogger(__name__)
 
@@ -424,6 +423,8 @@ def sync_vars(
     console.get_console().print(f"シークレット ID: {secret_id}")
 
     try:
+        from composer_local import secret_manager_sync
+
         sync_client = secret_manager_sync.create_sync_client(
             project_id=resolved_project,
             local_env_path=env_path,
@@ -510,6 +511,8 @@ def sync_settings(project: str, location: str, env_name: str, verbose: bool, deb
     utils.setup_logging(verbose, debug)
     msg = "Cloud Composer の設定を composer_settings.py に同期しています..."
     print(f"{constants.ANSI_BLUE}{msg}{constants.ANSI_RESET}")
+    from composer_local.sync_settings import sync_composer_settings
+
     settings_path = pathlib.Path(__file__).parent / "composer_settings.py"
     sync_composer_settings(
         project_id=project,

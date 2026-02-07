@@ -23,7 +23,15 @@ Secret Manager に保存します。
 import argparse
 import json
 
-from google.cloud import secretmanager
+try:
+    from google.cloud import secretmanager
+except ImportError as _err:
+    raise ImportError(
+        "GCP 連携機能には追加パッケージが必要です。\n"
+        "  uv sync --extra gcp\n"
+        "を実行してください。"
+    ) from _err
+
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from composer_local import composer_settings, constants

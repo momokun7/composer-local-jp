@@ -752,9 +752,6 @@ dependencies = [
     { name = "click" },
     { name = "docker" },
     { name = "dotenv" },
-    { name = "google-auth" },
-    { name = "google-cloud-artifact-registry" },
-    { name = "google-cloud-orchestration-airflow" },
     { name = "jinja2" },
     { name = "python-dotenv" },
     { name = "rich" },
@@ -766,6 +763,12 @@ dev = [
     { name = "black" },
     { name = "isort" },
     { name = "pyproject-flake8" },
+]
+gcp = [
+    { name = "google-auth" },
+    { name = "google-cloud-artifact-registry" },
+    { name = "google-cloud-orchestration-airflow" },
+    { name = "google-cloud-secret-manager" },
 ]
 
 [package.dev-dependencies]
@@ -785,9 +788,10 @@ requires-dist = [
     { name = "click", specifier = ">=8.1.8,<9.0.0" },
     { name = "docker", specifier = ">=7.0.0" },
     { name = "dotenv", specifier = ">=0.9.9,<1.0.0" },
-    { name = "google-auth", specifier = ">=2.29.0,<3.0.0" },
-    { name = "google-cloud-artifact-registry", specifier = ">=1.2.0" },
-    { name = "google-cloud-orchestration-airflow", specifier = ">=1.2.0" },
+    { name = "google-auth", marker = "extra == 'gcp'", specifier = ">=2.29.0,<3.0.0" },
+    { name = "google-cloud-artifact-registry", marker = "extra == 'gcp'", specifier = ">=1.2.0" },
+    { name = "google-cloud-orchestration-airflow", marker = "extra == 'gcp'", specifier = ">=1.2.0" },
+    { name = "google-cloud-secret-manager", marker = "extra == 'gcp'", specifier = ">=2.0.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13.2,<6.0.0" },
     { name = "jinja2", specifier = ">=3.1.5,<4.0.0" },
     { name = "pyproject-flake8", marker = "extra == 'dev'", specifier = ">=6.1.0,<7.0.0" },
@@ -795,7 +799,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.0" },
     { name = "rich-click", specifier = "==1.4.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["gcp", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

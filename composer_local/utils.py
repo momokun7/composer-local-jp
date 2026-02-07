@@ -134,11 +134,14 @@ def create_plain_status_text(
     add_item("DAG ディレクトリ", dags_path)
 
     # 認証情報の有効性をチェックして表示
-    auth_check = check_auth_validity()
-    if auth_check["is_valid"]:
-        auth_status = wrap_auth_status_in_color(auth_description, True)
-    else:
-        auth_status = wrap_auth_status_in_color(auth_check['error_message'], False)
+    try:
+        auth_check = check_auth_validity()
+        if auth_check["is_valid"]:
+            auth_status = wrap_auth_status_in_color(auth_description, True)
+        else:
+            auth_status = wrap_auth_status_in_color(auth_check['error_message'], False)
+    except Exception:
+        auth_status = auth_description
 
     add_item("認証情報", auth_status)
     add_item("設定パス", gcloud_path)

@@ -237,11 +237,16 @@ class Environment:
             self.env_dir_path / "plugins": "gcs/plugins/",
             # Mount data directory
             self.env_dir_path / "data": "gcs/data/",
-            # Mount gcloud config for authentication
-            pathlib.Path(utils.resolve_gcloud_config_path()): ".config/gcloud",
             # Mount requirements file
             self.env_dir_path / "requirements.txt": "composer_requirements.txt",
         }
+        # Mount gcloud config for authentication (optional)
+        try:
+            gcloud_path = pathlib.Path(utils.resolve_gcloud_config_path())
+            if gcloud_path.is_dir():
+                m[gcloud_path] = ".config/gcloud"
+        except errors.ComposerCliError:
+            LOG.debug("gcloud config not found; skipping mount (local-only mode)")
         if include_db:
             (self.env_dir_path / "postgresql_data").mkdir(parents=True, exist_ok=True)
             m[self.env_dir_path / "postgresql_data"] = "/var/lib/postgresql/data"
@@ -386,6 +391,8 @@ class Environment:
         self._ensure_attached(net, db)
         app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
         if app.status != constants.ContainerStatus.RUNNING:
+            self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
+            self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
             app.start()
         self._ensure_attached(net, app)
         self._auto_import_variables()
@@ -415,6 +422,8 @@ class Environment:
         # Start application container in background first
         app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
         if app.status != constants.ContainerStatus.RUNNING:
+            self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
+            self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
             app.start()
         self._ensure_attached(net, app)
         self._auto_import_variables()
@@ -580,7 +589,13 @@ class Environment:
             else ""
         )
         env_status_colored = utils.wrap_status_in_color(env_status)
-        auth_info = utils.get_auth_info()
+
+        try:
+            auth_info = utils.get_auth_info()
+            gcloud_path = utils.resolve_gcloud_config_path()
+        except (errors.ComposerCliError, Exception):
+            auth_info = {"description": "ローカル専用モード（GCP 未設定）"}
+            gcloud_path = ""
 
         # 動的レイアウトを使用
         msg = utils.create_plain_status_text(
@@ -590,7 +605,7 @@ class Environment:
             image_version=self.image_version,
             dags_path=str(self.dags_path),
             auth_description=auth_info["description"],
-            gcloud_path=utils.resolve_gcloud_config_path(),
+            gcloud_path=gcloud_path,
         )
         console.get_console().print(f"\n{msg}\n{constants.FINAL_ENV_MESSAGE}")
 
