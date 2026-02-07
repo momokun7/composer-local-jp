@@ -2,7 +2,6 @@ import functools
 from typing import Optional, Tuple
 
 import click
-from google.auth import exceptions as auth_exception
 
 from composer_local import constants
 
@@ -105,9 +104,14 @@ def catch_exceptions(func=None):
             click.Abort,
         ):
             raise
-        except auth_exception.DefaultCredentialsError as err:
-            raise InvalidAuthError(str(err))
-        except Exception:
+        except Exception as exc:
+            try:
+                from google.auth import exceptions as auth_exception
+
+                if isinstance(exc, auth_exception.DefaultCredentialsError):
+                    raise InvalidAuthError(str(exc))
+            except ImportError:
+                pass
             message = "\nFatal exception occurred."
             raise ComposerCliFatalError(message)
 

@@ -28,8 +28,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from google.auth.exceptions import DefaultCredentialsError
-from google.cloud import secretmanager
+try:
+    from google.auth.exceptions import DefaultCredentialsError
+    from google.cloud import secretmanager
+except ImportError as _err:
+    raise ImportError(
+        "GCP 連携機能には追加パッケージが必要です。\n"
+        "  uv sync --extra gcp\n"
+        "を実行してください。"
+    ) from _err
 
 from composer_local import composer_settings, constants, errors
 

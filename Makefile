@@ -31,7 +31,7 @@ SERVICE_ACCOUNT ?= $(_CS_SA)
 # .PHONY 宣言
 # =============================================================================
 
-.PHONY: help import create remove recreate start stop status logs \
+.PHONY: help import import-gcp create remove recreate start stop status logs \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
         clean auth-user auth-sa wait-ready init-all
 
@@ -154,6 +154,7 @@ help:
 	@echo ""
 	@echo "  【環境セットアップ（GCP 設定不要）】"
 	@echo "  import            uv 環境にプロジェクトをインストール（uv sync）"
+	@echo "  import-gcp        GCP 連携パッケージを追加インストール（uv sync --extra gcp）"
 	@echo "  create            ローカル環境を作成し、初期セットアップを自動実行"
 	@echo "  start             $(ENV) を起動（フォアグラウンドで実行、Ctrl+Cで停止）"
 	@echo "  stop              $(ENV) を停止（環境は残す）"
@@ -183,6 +184,9 @@ help:
 
 import:
 	@uv sync
+
+import-gcp:
+	@uv sync --extra gcp
 
 create:
 	$(call create_env)
