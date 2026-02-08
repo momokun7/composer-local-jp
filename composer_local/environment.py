@@ -253,7 +253,10 @@ class Environment:
         except errors.ComposerCliError:
             LOG.debug("gcloud config not found; skipping mount (local-only mode)")
         if include_db:
-            (self.env_dir_path / "postgresql_data").mkdir(parents=True, exist_ok=True)
+            try:
+                (self.env_dir_path / "postgresql_data").mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise errors.ComposerCliError(f"PostgreSQL データディレクトリの作成に失敗: {e}")
             m[self.env_dir_path / "postgresql_data"] = "/var/lib/postgresql/data"
         mounts = []
         for src, target in m.items():
@@ -326,6 +329,12 @@ class Environment:
             raise errors.EnvironmentNotFoundError()
 
     def _create_db(self):
+        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
+            LOG.warning(
+                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
+                " PostgreSQL ポートが外部ネットワークに公開されます。"
+                " セキュリティリスクを理解した上で使用してください。"
+            )
         self.docker_client.images.pull(composer_settings.POSTGRES_IMAGE)
         return self.docker_client.containers.create(
             image=composer_settings.POSTGRES_IMAGE,
@@ -354,11 +363,25 @@ class Environment:
         )
 
     def _create_app(self):
+        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
+            LOG.warning(
+                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
+                " Airflow Web サーバーのポートが外部ネットワークに公開されます。"
+                " セキュリティリスクを理解した上で使用してください。"
+            )
         image_tag = self._image_tag()
         try:
             self.docker_client.images.pull(image_tag)
-        except (docker_errors.ImageNotFound, docker_errors.APIError):
+        except docker_errors.ImageNotFound:
             raise errors.ImageNotFoundError(self.image_version)
+        except docker_errors.APIError as e:
+            error_msg = str(e).lower()
+            if "unauthorized" in error_msg or "denied" in error_msg:
+                raise errors.ComposerCliError(
+                    f"Docker イメージの取得に認証エラーが発生しました。\n"
+                    f"対処: gcloud auth configure-docker us-docker.pkg.dev"
+                )
+            raise errors.ComposerCliError(f"Docker イメージの取得に失敗しました: {e}")
         env_vars = {**self._default_airflow_env(), **(self.environment_vars or {})}
         entrypoint = f"sh {constants.ENTRYPOINT_PATH}"
         c = self.docker_client.containers.create(
@@ -402,7 +425,7 @@ class Environment:
             try:
                 variables_json_path.unlink()
             except Exception as e:
-                LOG.debug(f"一時ファイル削除失敗: {e}")
+                LOG.warning(f"一時ファイル削除失敗: {e}")
 
     def _wait_for_db_ready(self, db, timeout_seconds: int = 60, interval_seconds: int = 2) -> None:
         """PostgreSQL コンテナが接続可能になるまで待機する。
@@ -430,8 +453,10 @@ class Environment:
             elapsed = time.time() - start_time
             if elapsed >= timeout_seconds:
                 print(" タイムアウト")
-                LOG.warning("PostgreSQL が指定時間内に起動しませんでした。")
-                return
+                raise errors.ComposerCliError(
+                    f"PostgreSQL が {timeout_seconds} 秒以内に起動しませんでした。"
+                    " Docker のメモリ割り当てを確認してください（推奨: 4GB 以上）。"
+                )
             print(".", end="", flush=True)
             time.sleep(interval_seconds)
 
@@ -482,10 +507,19 @@ class Environment:
 
         print(f"{self.name} 環境を起動しました。")
 
+    def _run_airflow_setup_command(self, command, description: str) -> bool:
+        """Airflow セットアップコマンドを実行するヘルパー。成功時 True を返す。"""
+        try:
+            self.run_airflow_command(command, quiet=True)
+            return True
+        except Exception:
+            LOG.debug(f"{description}に失敗しました", exc_info=True)
+            return False
+
     def _setup_google_connection(self) -> bool:
         """Google Cloud のデフォルト接続を設定する。成功時 True を返す。"""
-        try:
-            self.run_airflow_command([
+        return self._run_airflow_setup_command(
+            [
                 "connections", "add",
                 "google_cloud_default",
                 "--conn-type", "google_cloud_platform",
@@ -493,16 +527,14 @@ class Environment:
                     "extra__google_cloud_platform__scope":
                         "https://www.googleapis.com/auth/cloud-platform",
                 }),
-            ], quiet=True)
-            return True
-        except Exception:
-            LOG.debug("Google Cloud 接続の設定に失敗しました", exc_info=True)
-            return False
+            ],
+            description="Google Cloud 接続の設定",
+        )
 
     def _create_admin_user(self) -> bool:
         """Admin ユーザーを作成する。成功時 True を返す。"""
-        try:
-            self.run_airflow_command([
+        return self._run_airflow_setup_command(
+            [
                 "users", "create",
                 "--role", "Admin",
                 "--username", composer_settings.ADMIN_USERNAME,
@@ -510,11 +542,9 @@ class Environment:
                 "--email", composer_settings.ADMIN_EMAIL,
                 "--firstname", composer_settings.ADMIN_FIRSTNAME,
                 "--lastname", composer_settings.ADMIN_LASTNAME,
-            ], quiet=True)
-            return True
-        except Exception:
-            LOG.debug("Admin ユーザーの作成に失敗しました", exc_info=True)
-            return False
+            ],
+            description="Admin ユーザーの作成",
+        )
 
     def _first_time_init(self):
         """初回起動時の自動セットアップを実行する。"""
@@ -648,9 +678,10 @@ class Environment:
             elapsed = time.time() - start_time
             if elapsed >= timeout_seconds:
                 print(" タイムアウト")
-                print("指定したタイムアウト内に Web サーバーが起動しませんでした。")
-                print("ログを確認してから、もう一度お試しください。")
-                return
+                raise errors.ComposerCliError(
+                    f"Airflow Web サーバーが {timeout_seconds} 秒以内に起動しませんでした。"
+                    " ログを確認してから、もう一度お試しください。"
+                )
             print(".", end="", flush=True)
             time.sleep(interval_seconds)
 

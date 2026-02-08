@@ -71,6 +71,16 @@ class LogsMaxLines(click.ParamType):
 @click.group(name="composer-local")
 @click.version_option(version=version.__version__, prog_name="composer-local")
 def cli():
+    """ローカル Composer 環境を管理する CLI ツールです。
+
+    Docker を使用して Cloud Composer 互換の Airflow 環境を
+    ローカルで作成・起動・管理できます。
+
+    基本的な使い方:
+      composer-local create --from-image-version IMAGE ENV
+      composer-local start ENV
+      composer-local logs ENV --follow
+    """
     pass
 
 
@@ -158,7 +168,7 @@ def create(
     debug: bool,
     database_engine: str,
     dags_path: Optional[pathlib.Path] = None,
-):
+) -> None:
     utils.setup_logging(verbose, debug)
     print(f"{constants.ANSI_BLUE}環境を作成しています...{constants.ANSI_RESET}")
     utils.assert_environment_name_is_valid(environment)
@@ -204,7 +214,7 @@ def create(
 @verbose_mode
 @debug_mode
 @errors.catch_exceptions()
-def start(environment: Optional[str], web_server_port: Optional[int], verbose: bool, debug: bool):
+def start(environment: Optional[str], web_server_port: Optional[int], verbose: bool, debug: bool) -> None:
     utils.setup_logging(verbose, debug)
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, web_server_port)
@@ -217,7 +227,7 @@ def start(environment: Optional[str], web_server_port: Optional[int], verbose: b
 @verbose_mode
 @debug_mode
 @errors.catch_exceptions()
-def stop(environment: Optional[str], verbose: bool, debug: bool):
+def stop(environment: Optional[str], verbose: bool, debug: bool) -> None:
     utils.setup_logging(verbose, debug)
     print(f"{constants.ANSI_YELLOW}環境を停止しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
@@ -242,7 +252,7 @@ def stop(environment: Optional[str], verbose: bool, debug: bool):
 @errors.catch_exceptions()
 def logs(
     environment: Optional[str], max_lines: Union[str, int], follow: bool, verbose: bool, debug: bool
-):
+) -> None:
     utils.setup_logging(verbose, debug)
     print(f"{constants.ANSI_BLUE}ログを表示しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
@@ -273,7 +283,7 @@ def list_command(verbose: bool, debug: bool):
 @verbose_mode
 @debug_mode
 @errors.catch_exceptions()
-def describe(environment: Optional[str], verbose: bool, debug: bool):
+def describe(environment: Optional[str], verbose: bool, debug: bool) -> None:
     utils.setup_logging(verbose, debug)
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
@@ -299,7 +309,7 @@ def describe(environment: Optional[str], verbose: bool, debug: bool):
 @errors.catch_exceptions()
 def remove(
     environment: Optional[str], verbose: bool, debug: bool, skip_confirmation: bool, force: bool
-):
+) -> None:
     utils.setup_logging(verbose, debug)
     print(f"{constants.ANSI_YELLOW}環境を削除しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
@@ -310,8 +320,17 @@ def remove(
     try:
         env = composer_environment.Environment.load_from_config(env_path, None)
     except errors.InvalidConfigurationError:
-        md = rich.markdown.Markdown(constants.MALFORMED_CONFIG_REMOVING_CONTAINER)
-        console.get_console().print(md)
+        console.get_console().print(
+            f"{constants.ANSI_YELLOW}警告: 設定ファイルが破損しています。{constants.ANSI_RESET}"
+        )
+        if force:
+            import subprocess
+            env_name = env_path.name
+            for name in [f"{constants.CONTAINER_NAME}-{env_name}", f"{constants.DB_CONTAINER_NAME}-{env_name}"]:
+                try:
+                    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+                except Exception:
+                    pass
     else:
         env.remove(force, force_error=click.UsageError(constants.USE_FORCE_TO_REMOVE_ERROR))
     shutil.rmtree(env_path)

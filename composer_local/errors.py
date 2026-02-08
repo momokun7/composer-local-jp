@@ -67,6 +67,11 @@ class FailedToParseConfigError(InvalidConfigurationError):
         super().__init__(msg)
 
 
+class DockerAPIError(ComposerCliError):
+    """Docker API との通信で発生するエラー。"""
+    pass
+
+
 class DockerNotAvailableError(ComposerCliError):
     def __init__(self, err):
         super().__init__(constants.DOCKER_NOT_AVAILABLE_ERROR.format(error=err))

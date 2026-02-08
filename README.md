@@ -6,8 +6,8 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 
 ## 特徴
 
-- **ローカルファースト** - GCP 設定不要で `make import && make start` だけで Airflow が動く
-- **簡単セットアップ** - `make start` 一発で完全な Airflow 環境を構築（初回は自動作成）
+- **ローカルファースト** - GCP 設定不要でローカル開発可能
+- **簡単セットアップ** - `make import && make start` だけで完全な Airflow 環境を構築（初回は自動作成）
 - **GCP 連携はオプション** - Secret Manager・Airflow Variables（変数）同期が必要な場合のみ設定
 - **Composer 3 対応** - 最新の Airflow 2.10.5 + PostgreSQL
 - **uv による高速な依存関係管理**
@@ -25,7 +25,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 | **Docker** | `docker --version` | [Docker Desktop](https://docs.docker.com/get-docker/) |
 | **Make** | `make --version` | macOS: Xcode CLT に同梱 / Linux: `apt install make` |
 | **Python 3.11+** | `python3 --version` | [python.org](https://www.python.org/downloads/) |
-| **uv** | `uv --version` | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| **uv** | `uv --version` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 
 - メモリ: Docker Desktop に **4GB 以上**を割り当ててください
 - GCP と連携する場合のみ、[gcloud CLI](https://cloud.google.com/sdk/docs/install) が追加で必要です
@@ -75,6 +75,15 @@ make start
 ```bash
 cp composer_local/composer_settings.py.example composer_local/composer_settings.py
 # 必要に応じて編集
+```
+
+### 複数環境の管理（任意）
+
+環境名を変えることで、複数の独立した環境を並行稼働できます。
+
+```bash
+make start ENV=dev PORT=8080
+make start ENV=staging PORT=8081   # 別ターミナルで
 ```
 
 ### GCP 連携（任意）
@@ -147,6 +156,7 @@ make import-gcp
 
 ```
 composer-local-jp/
+├── .github/                    # CI/CD ワークフロー
 ├── Makefile                    # コマンドインターフェース
 ├── composer_local/             # メインパッケージ
 │   ├── cli.py                  # CLI コマンド定義
@@ -155,6 +165,7 @@ composer-local-jp/
 │   └── docker_files/           # コンテナ内ファイル
 ├── dags/                       # DAG ファイル
 ├── docs/                       # 追加ドキュメント
+├── scripts/                    # ユーティリティスクリプト
 └── tests/                      # テスト
 ```
 
@@ -248,6 +259,32 @@ PostgreSQL のポート（デフォルト: 25432）が競合する場合は、`c
 **対処:** Docker Desktop の設定でメモリを **4GB 以上**に割り当ててください。
 - macOS: Docker Desktop → Settings → Resources → Memory
 - Windows: Docker Desktop → Settings → Resources → Memory
+
+</details>
+
+<details>
+<summary><strong>GCP 認証エラー（sync-vars 実行時）</strong></summary>
+
+**エラー:** `Permission denied` や `Application Default Credentials not found`
+
+**対処:**
+```bash
+make auth-user
+# サービスアカウントの場合:
+make auth-sa SERVICE_ACCOUNT=xxx@yyy.iam.gserviceaccount.com
+```
+
+</details>
+
+<details>
+<summary><strong>make import が失敗する</strong></summary>
+
+**対処:**
+```bash
+uv cache clean
+rm -rf .venv
+make import
+```
 
 </details>
 
