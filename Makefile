@@ -32,25 +32,46 @@ CONTAINER_NAME  ?= composer-local-dev
         clean auth-user auth-sa
 
 define check_gcp_settings
-	@if [ -z "$(PROJECT)" ] || [ -z "$(LOCATION)" ] || [ -z "$(ENV_NAME)" ]; then \
+	@missing=""; \
+	if [ -z "$(PROJECT)" ]; then missing="$$missing PROJECT"; fi; \
+	if [ -z "$(LOCATION)" ]; then missing="$$missing LOCATION"; fi; \
+	if [ -z "$(ENV_NAME)" ]; then missing="$$missing ENV_NAME"; fi; \
+	if [ -n "$$missing" ]; then \
 		echo ""; \
-		echo "GCP 設定が不足しています。以下のいずれかの方法で設定してください:"; \
+		echo "エラー: 以下の GCP 設定が不足しています:$$missing"; \
 		echo ""; \
 		echo "  方法1: コマンドラインで指定"; \
-		echo "    make $(MAKECMDGOALS) PROJECT=xxx LOCATION=xxx ENV_NAME=xxx"; \
+		echo "    make $(MAKECMDGOALS) PROJECT=my-project LOCATION=asia-northeast1 ENV_NAME=my-env"; \
 		echo ""; \
-		echo "  方法2: composer_settings.py で設定"; \
+		echo "  方法2: composer_settings.py で設定（詳細: docs/gcp-integration.md）"; \
 		echo "    cp composer_local/composer_settings.py.example composer_local/composer_settings.py"; \
 		echo ""; \
 		exit 1; \
 	fi
 endef
 
-define check_env_exists
-	@if [ ! -f "composer/$(ENV)/config.json" ]; then \
+define check_secret_id
+	@if [ -z "$(SECRET_ID)" ]; then \
 		echo ""; \
-		echo "環境がまだ作成されていません。以下のコマンドで作成・起動できます:"; \
-		echo "  make start"; \
+		echo "エラー: SECRET_ID が設定されていません"; \
+		echo "  使用例: make $(MAKECMDGOALS) SECRET_ID=my-secret-id"; \
+		echo "  または composer_settings.py で SECRET_ID を設定"; \
+		echo ""; \
+		exit 1; \
+	fi
+endef
+
+define check_env_exists
+	@if [ ! -d "composer/$(ENV)" ]; then \
+		echo ""; \
+		echo "環境ディレクトリ 'composer/$(ENV)' が存在しません。"; \
+		echo "  make start で環境を作成・起動できます。"; \
+		echo ""; \
+		exit 1; \
+	elif [ ! -f "composer/$(ENV)/config.json" ]; then \
+		echo ""; \
+		echo "設定ファイル 'composer/$(ENV)/config.json' が見つかりません。"; \
+		echo "  make start で環境を再作成できます。"; \
 		echo ""; \
 		exit 1; \
 	fi
@@ -86,20 +107,24 @@ help:
 	@echo "  import            依存関係をインストール（初回のみ）"
 	@echo "  import-gcp        GCP 連携パッケージを追加インストール"
 	@echo "  start             環境を起動（初回は自動作成します）"
+	@echo "                      オプション: ENV, PORT, IMAGE, DAGS, DATABASE"
 	@echo "  stop              環境を停止（コンテナは保持されます）"
 	@echo ""
 	@echo "  【環境管理】"
-	@echo "  status            環境の設定とステータスを表示"
-	@echo "  logs              ログを表示（例: make logs LINES=50）"
+	@echo "  status            環境の設定とステータスを表示（Docker コンテナ状態含む）"
+	@echo "  logs              ログを表示"
+	@echo "                      オプション: LINES（行数指定。例: make logs LINES=50）"
 	@echo "  remove            環境を削除"
-	@echo "  recreate          環境を削除して再作成・起動"
+	@echo "  recreate          環境を削除して再作成・起動（削除失敗時も続行）"
 	@echo "  clean             キャッシュやビルド生成物を削除"
 	@echo ""
-	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）】"
+	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）※ 詳細: docs/gcp-integration.md】"
 	@echo "  auth-user         GCP ユーザー認証（個人アカウント）"
 	@echo "  auth-sa           GCP サービスアカウント認証"
+	@echo "                      必須: SERVICE_ACCOUNT"
 	@echo "  sync-vars         Cloud Composer → ローカルへ Variables を同期"
 	@echo "  sync-vars-sm      Secret Manager 経由で Variables を同期"
+	@echo "                      必須: SECRET_ID"
 	@echo "  sync-settings     Cloud Composer の設定を同期"
 	@echo ""
 	@echo "  【メンテナンス】"
@@ -108,6 +133,7 @@ help:
 	@echo "  format            コードフォーマット（black + isort）"
 	@echo "  setup-connections  Google Cloud のデフォルト接続を設定"
 	@echo "  create-admin       Airflow Admin ユーザーを作成"
+	@echo "                      オプション: USERNAME, PASSWORD, EMAIL, FIRSTNAME, LASTNAME"
 	@echo ""
 	@echo "  クイックスタート: make import && make start"
 	@echo ""
@@ -140,12 +166,16 @@ remove:
 	@uv run --active -- composer-local remove $(ENV) --force --skip-confirmation
 
 recreate:
-	@$(MAKE) remove
+	@if [ -f "composer/$(ENV)/config.json" ]; then \
+		$(MAKE) remove || echo "警告: 環境の削除に失敗しましたが、再作成を続行します。"; \
+	fi
 	@$(MAKE) start
 
 status:
 	$(call check_env_exists)
 	@uv run --active -- composer-local describe $(ENV)
+	@echo ""
+	@docker ps --filter "name=$(CONTAINER_NAME)-$(ENV)" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
 
 logs:
 	$(call check_env_running)
@@ -161,14 +191,7 @@ sync-vars:
 		--local-env-dir $(PWD)/composer/$(ENV) || exit 1
 
 sync-vars-sm:
-	@if [ -z "$(SECRET_ID)" ]; then \
-		echo ""; \
-		echo "SECRET_ID の指定が必要です。使用例:"; \
-		echo "  make sync-vars-sm SECRET_ID=xxx"; \
-		echo "  または composer_settings.py で SECRET_ID を設定"; \
-		echo ""; \
-		exit 1; \
-	fi
+	$(call check_secret_id)
 	$(call check_gcp_settings)
 	$(call check_env_running)
 	@uv run --active -- python composer_local/export_composer_variables.py \

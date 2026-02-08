@@ -150,3 +150,10 @@ COMPOSER_3_REQUIRES_POSTGRESQL = (
     "Composer 3 でスタンドアロン DAG プロセッサを使用するには postgresql が必要です。"
     "`--database postgresql` を使用してください。"
 )
+
+# Docker ヘルスチェック設定（ナノ秒）
+HEALTHCHECK_INTERVAL_NS = 5_000_000_000      # 5秒
+HEALTHCHECK_TIMEOUT_NS = 5_000_000_000        # 5秒
+HEALTHCHECK_RETRIES = 5
+HEALTHCHECK_START_PERIOD_DB_NS = 10_000_000_000    # 10秒
+HEALTHCHECK_START_PERIOD_APP_NS = 30_000_000_000   # 30秒

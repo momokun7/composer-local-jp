@@ -66,3 +66,4 @@ POSTGRES_IMAGE = "postgres:14-alpine"
 MAX_PARALLEL_WORKERS = 10     # Secret Manager 同期の並列ワーカー数
 MASK_PREFIX_LENGTH = 4        # ログ出力時のマスキング（先頭表示文字数）
 MASK_SUFFIX_LENGTH = 4        # ログ出力時のマスキング（末尾表示文字数）
+LOG_LEVEL = "INFO"            # ログレベル（DEBUG, INFO, WARNING, ERROR）
