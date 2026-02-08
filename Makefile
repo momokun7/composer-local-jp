@@ -35,7 +35,7 @@ CONTAINER_NAME  ?= composer-local-dev
 # =============================================================================
 
 .PHONY: help import import-gcp start stop status logs \
-        remove recreate create \
+        remove recreate \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
         clean auth-user auth-sa
 
@@ -115,9 +115,9 @@ help:
 	@echo "利用可能なターゲット:"
 	@echo ""
 	@echo "  【基本操作（GCP 設定不要）】"
-	@echo "  import            uv 環境にプロジェクトをインストール（uv sync）"
-	@echo "  import-gcp        GCP 連携パッケージを追加インストール（uv sync --extra gcp）"
-	@echo "  start             環境を起動（未作成なら自動作成、フォアグラウンド実行、Ctrl+Cで停止）"
+	@echo "  import            uv 環境にプロジェクトをインストール"
+	@echo "  import-gcp        GCP 連携パッケージを追加インストール"
+	@echo "  start             環境を起動（初回は自動作成）"
 	@echo "  stop              $(ENV) を停止（環境は残す）"
 	@echo ""
 	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）】"
@@ -133,14 +133,17 @@ help:
 	@echo "  remove            環境を削除"
 	@echo "  recreate          環境を削除して再作成・起動"
 	@echo ""
-	@echo "  【その他】"
+	@echo "  【メンテナンス】"
 	@echo "  setup-connections Google Cloud のデフォルト接続を設定（要: 環境起動）"
-	@echo "  create-admin      Airflow Adminユーザーを作成（要: 環境起動、USERNAME/PASSWORD/EMAIL など指定可）"
+	@echo "  create-admin      Airflow Adminユーザーを作成（要: 環境起動）"
 	@echo "  clean             __pycache__ やビルド生成物を削除"
 	@echo ""
 	@echo "  【オプション引数】"
 	@echo "  GCP 設定は composer_settings.py またはコマンドラインで指定:"
 	@echo "    make sync-vars PROJECT=xxx LOCATION=xxx ENV_NAME=xxx"
+	@echo ""
+	@echo "  【クイックスタート】"
+	@echo "  make import && make start    初回セットアップ"
 
 import:
 	@uv sync
@@ -151,9 +154,6 @@ import-gcp:
 start:
 	$(call ensure_env_exists)
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.start_foreground()"
-
-# 後方互換: make create は make start のエイリアス
-create: start
 
 stop:
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.stop()" \

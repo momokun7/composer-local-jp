@@ -402,14 +402,33 @@ class Environment:
             except Exception:
                 pass
 
-    def start(self):
+    def _ensure_containers_running(self) -> Tuple:
+        """コンテナ起動の共通ロジック。
+
+        以下の処理を順に実行する:
+        1. オプションのバリデーション
+        2. DAGパスの存在確認
+        3. Dockerネットワークの作成
+        4. DBコンテナの取得/作成/起動
+        5. Appコンテナの取得/作成/起動
+        6. コンテナへのファイルコピー（entrypoint.sh, run_as_user.sh, webserver_config.py）
+        7. ネットワークへのアタッチ
+        8. 変数の自動インポート
+
+        Returns:
+            Tuple: (db, app) コンテナオブジェクトのタプル
+        """
         self._assert_options()
         files.assert_dag_path_exists(self.dags_path)
         net = self._network(create=True)
+
+        # DBコンテナの取得/作成/起動
         db = self._get_container(self.db_container_name, ignore_not_found=True) or self._create_db()
         if db.status != constants.ContainerStatus.RUNNING:
             db.start()
         self._ensure_attached(net, db)
+
+        # Appコンテナの取得/作成/起動
         app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
         if app.status != constants.ContainerStatus.RUNNING:
             self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
@@ -417,9 +436,32 @@ class Environment:
             self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
             app.start()
         self._ensure_attached(net, app)
+
+        # 変数の自動インポート
         self._auto_import_variables()
 
-        # Wait until webserver is reachable before printing the link
+        return db, app
+
+    def _handle_first_time_init(self):
+        """初回セットアップ判定と実行。
+
+        .initialized マーカーファイルが存在しない場合に初回セットアップを実行し、
+        セットアップ完了バナーを表示する。
+        既に初期化済みの場合は起動メッセージと Web UI の URL を表示する。
+        """
+        initialized_marker = self.env_dir_path / ".initialized"
+        if not initialized_marker.exists():
+            self._first_time_init()
+            self._show_setup_banner()
+        else:
+            print(f"{self.name} 環境を起動しました。")
+            print(f"Airflow Web UI: http://localhost:{self.port}")
+
+    def start(self):
+        """既存環境をバックグラウンドで起動（再起動用）。"""
+        self._ensure_containers_running()
+
+        # Webサーバーが応答するまで待機
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
@@ -427,27 +469,25 @@ class Environment:
 
         print(f"{self.name} 環境を起動しました。")
 
-    def _first_time_init(self):
-        """初回起動時の自動セットアップ（接続設定 + 管理者ユーザー作成）"""
-        print(f"{constants.ANSI_BLUE}初回セットアップを実行しています...{constants.ANSI_RESET}")
-
-        # Google Cloud 接続を設定
+    def _setup_google_connection(self) -> bool:
+        """Google Cloud のデフォルト接続を設定する。成功時 True を返す。"""
         try:
             self.run_airflow_command([
-                "connections", "add", "google_cloud_default",
+                "connections", "add",
+                "google_cloud_default",
                 "--conn-type", "google_cloud_platform",
                 "--conn-extra", json.dumps({
-                    "extra__google_cloud_platform__key_path": None,
-                    "extra__google_cloud_platform__keyfile_dict": None,
                     "extra__google_cloud_platform__scope":
                         "https://www.googleapis.com/auth/cloud-platform",
                 }),
             ], quiet=True)
+            return True
         except Exception:
             LOG.debug("Google Cloud 接続の設定に失敗しました", exc_info=True)
-            print("⚠ Google Cloud 接続の設定をスキップしました（GCP未設定の場合は正常です）")
+            return False
 
-        # Admin ユーザーを作成（AUTH_ROLE_PUBLIC のフォールバック用）
+    def _create_admin_user(self) -> bool:
+        """Admin ユーザーを作成する。成功時 True を返す。"""
         try:
             self.run_airflow_command([
                 "users", "create",
@@ -458,15 +498,27 @@ class Environment:
                 "--firstname", composer_settings.ADMIN_FIRSTNAME,
                 "--lastname", composer_settings.ADMIN_LASTNAME,
             ], quiet=True)
+            return True
         except Exception:
             LOG.debug("Admin ユーザーの作成に失敗しました", exc_info=True)
+            return False
+
+    def _first_time_init(self):
+        """初回起動時の自動セットアップを実行する。"""
+        print(f"{constants.ANSI_BLUE}初回セットアップを実行しています...{constants.ANSI_RESET}")
+
+        gcp_ok = self._setup_google_connection()
+        admin_ok = self._create_admin_user()
+
+        if not gcp_ok:
+            print("⚠ Google Cloud 接続の設定をスキップしました（GCP未設定の場合は正常です）")
+        if not admin_ok:
             print("⚠ Admin ユーザーの作成をスキップしました（既に存在する場合は正常です）")
 
-        # マーカーファイルを作成
         (self.env_dir_path / ".initialized").touch()
 
     def _show_setup_banner(self):
-        """初回セットアップ完了バナーを表示"""
+        """初回セットアップ完了バナーを表示する。"""
         P = "\033[38;5;197m"
         P2 = "\033[38;5;163m"
         P3 = "\033[38;5;164m"
@@ -510,47 +562,23 @@ class Environment:
         print()
 
     def start_foreground(self):
-        """Start the environment in foreground mode, attaching to container logs."""
+        """環境をフォアグラウンドモードで起動し、コンテナログにアタッチする。"""
         import atexit
 
-        self._assert_options()
-        files.assert_dag_path_exists(self.dags_path)
-        net = self._network(create=True)
+        db, app = self._ensure_containers_running()
 
-        # Start database container in background
-        db = self._get_container(self.db_container_name, ignore_not_found=True) or self._create_db()
-        if db.status != constants.ContainerStatus.RUNNING:
-            db.start()
-        self._ensure_attached(net, db)
-
-        # Start application container in background first
-        app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
-        if app.status != constants.ContainerStatus.RUNNING:
-            self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
-            self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
-            self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
-            app.start()
-        self._ensure_attached(net, app)
-        self._auto_import_variables()
-
-        # Wait until webserver is reachable before printing the link
+        # Webサーバーが応答するまで待機
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
-        # 初回セットアップ（マーカーファイルがない場合）
-        initialized_marker = self.env_dir_path / ".initialized"
-        if not initialized_marker.exists():
-            self._first_time_init()
-            self._show_setup_banner()
-        else:
-            print(f"{self.name} 環境を起動しました。")
-            print(f"Airflow Web UI: http://localhost:{self.port}")
+        # 初回セットアップ判定（マーカーファイルによる統一処理）
+        self._handle_first_time_init()
 
         print("Ctrl+C で停止します...")
 
-        # Set up signal handlers to ensure containers are stopped
+        # シグナルハンドラでコンテナを確実に停止する
         def signal_handler(signum, frame):
             print(f"\n{self.name} 環境を停止しています...")
             try:
@@ -565,7 +593,7 @@ class Environment:
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGHUP, signal_handler)
 
-        # Set up atexit handler to ensure containers are stopped when process exits
+        # プロセス終了時にもコンテナを停止する
         def cleanup_containers():
             try:
                 app.stop()
@@ -586,7 +614,7 @@ class Environment:
                 if any(p in line_upper for p in (' ERROR ', '[ERROR]', ' WARNING ', '[WARNING]')):
                     print(line)
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
-            # Handle Ctrl+C, terminal close, or broken pipe
+            # Ctrl+C、ターミナル切断、またはパイプ破損を処理
             print(f"\n{self.name} 環境を停止しています...")
             try:
                 app.stop()
@@ -594,6 +622,25 @@ class Environment:
             except Exception:
                 pass
             print(f"{self.name} 環境が停止しました。")
+
+    def resume_env(self):
+        """停止中の環境を再開する。
+
+        _ensure_containers_running() で停止中のコンテナを起動し、
+        Webサーバーの準備完了を待ってから初回セットアップ判定を行う。
+        start() との違い: 初回セットアップ判定を含む点。
+        start_foreground() との違い: フォアグラウンドログへのアタッチを行わない点。
+        """
+        self._ensure_containers_running()
+
+        # Webサーバーが応答するまで待機
+        self._wait_until_webserver_ready(
+            timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
+            interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
+        )
+
+        # 初回セットアップ判定（マーカーファイルによる統一処理）
+        self._handle_first_time_init()
 
     def _wait_until_webserver_ready(self, timeout_seconds: int, interval_seconds: int) -> None:
         url = f"http://localhost:{self.port}"
@@ -678,23 +725,8 @@ class Environment:
         output = result.output.decode()
         filtered_lines = []
         for line in output.split('\n'):
-            # 特定の警告や情報メッセージを除外
-            if any(
-                skip_phrase in line
-                for skip_phrase in [
-                    "WARNING - empty cryptography key",
-                    "Optional provider feature disabled",
-                    "providers_manager.py",
-                    "crypto.py",
-                    "exec airflow variables import",
-                    "variables successfully updated",
-                    "Airflow Variables のインポートが完了しました",
-                    "+ [ False = True ]",
-                    "+ [",
-                    "= True ]",
-                    "= False ]",
-                ]
-            ):
+            # 定数で定義されたスキップ対象フレーズに該当する行を除外
+            if any(phrase in line for phrase in constants.AIRFLOW_LOG_SKIP_PHRASES):
                 continue
             filtered_lines.append(line)
 

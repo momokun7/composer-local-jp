@@ -50,7 +50,7 @@ make import
 make start
 ```
 
-起動が完了すると、ターミナルにログが流れ続けます（フォアグラウンド実行）。
+起動が完了すると、ターミナルにログが流れ続けます（フォアグラウンド実行）。ログが流れ続ける状態が起動完了のサインです。
 
 > **別のターミナルを開いて** ブラウザで Airflow Web UI にアクセスしてください:
 >
@@ -86,16 +86,16 @@ make import-gcp
 
 ### 基本コマンド
 
-| コマンド | 説明 | パラメータ | 実行頻度 |
-|---------|------|-----------|---------|
-| `make import` | uv 環境にプロジェクトをインストール | - | 初回 / 依存関係変更時 |
-| `make start` | 環境を起動（未作成なら自動作成） | `PORT=8090` | 毎回 |
-| `make stop` | 環境の停止（コンテナは残る） | - | 必要時 |
-| `make status` | 環境の設定とステータスを表示 | - | 必要時 |
-| `make logs` | ログの表示 | `LINES=50` / `LINES=all` | 必要時 |
-| `make remove` | 環境の削除 | - | 必要時 |
-| `make recreate` | 環境を削除して再作成・起動 | - | 必要時 |
-| `make clean` | `__pycache__` やビルド生成物を削除 | - | 必要時 |
+| コマンド | 説明 | パラメータ |
+|---------|------|-----------|
+| `make import` | uv 環境にプロジェクトをインストール | - |
+| `make start` | 環境を起動（未作成なら自動作成） | `PORT=8090` |
+| `make stop` | 環境の停止（コンテナは残る） | - |
+| `make status` | 環境の設定とステータスを表示 | - |
+| `make logs` | ログの表示 | `LINES=50` / `LINES=all` |
+| `make remove` | 環境の削除 | - |
+| `make recreate` | 環境を削除して再作成・起動 | - |
+| `make clean` | `__pycache__` やビルド生成物を削除 | - |
 
 ### GCP 連携コマンド（オプション）
 
@@ -150,28 +150,7 @@ make sync-vars PROJECT=your-project LOCATION=asia-northeast1 ENV_NAME=your-env
 
 `composer_settings.py.example` をコピーして `composer_settings.py` を作成すると、各種設定をカスタマイズできます。**GCP 未設定でもデフォルト値で動作する**ため、コピーは必須ではありません。
 
-<details>
-<summary>主要な設定項目一覧</summary>
-
-| カテゴリ | 設定項目 | デフォルト値 | 説明 |
-|---------|---------|-------------|------|
-| **ローカル環境** | `LOCAL_ENV_NAME` | `my-local-env` | ローカル環境の名前 |
-| | `LOCAL_PORT` | `8080` | Airflow Web UI のポート |
-| | `COMPOSER_IMAGE_VERSION` | `composer-3-airflow-2.10.5-build.13` | Composer イメージバージョン |
-| | `DAGS_PATH` | `dags` | DAG ディレクトリのパス |
-| **Airflow** | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin` | 管理者ユーザーの認証情報 |
-| | `DAG_DIR_LIST_INTERVAL` | `10` | DAG ディレクトリのスキャン間隔（秒） |
-| **データベース** | `DATABASE_ENGINE` | `postgresql` | データベースエンジン |
-| | `POSTGRES_LOCAL_PORT` | `25432` | PostgreSQL の外部公開ポート |
-| **Docker** | `DOCKER_MEMORY_LIMIT` | `4g` | コンテナのメモリ制限 |
-| | `BIND_TO_LOCALHOST_ONLY` | `True` | localhost のみにバインド |
-| **GCP（オプション）** | `PROJECT_ID` | _(未設定)_ | GCP プロジェクト ID |
-| | `COMPOSER_ENV_NAME` | _(未設定)_ | Cloud Composer 環境名 |
-| | `COMPOSER_LOCATION` | _(未設定)_ | Cloud Composer のリージョン |
-| | `SERVICE_ACCOUNT` | _(未設定)_ | サービスアカウント |
-| | `SECRET_ID` | _(未設定)_ | Secret Manager のシークレット ID |
-
-</details>
+各設定項目の詳細は `composer_settings.py.example` を参照してください。
 
 ---
 
