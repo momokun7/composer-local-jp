@@ -24,14 +24,15 @@ init_airflow() {
   fi
 
   # requirements が変更された場合のみインストールを実行
-  req_hash=$(md5sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1)
+  req_hash=$(md5sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1 || sha256sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1 || echo "no-hash")
   cached_hash=""
   if [ -f /tmp/.composer_req_hash ]; then
     cached_hash=$(cat /tmp/.composer_req_hash)
   fi
   if [ "$req_hash" != "$cached_hash" ]; then
     # Docker イメージ内の site-packages に書き込み不可のファイルがあるため権限を修正
-    sudo chmod -R u+w /opt/python3.11/lib/python3.11/site-packages/airflow/ 2>/dev/null || true
+    python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    sudo chmod -R u+w "/opt/python${python_version}/lib/python${python_version}/site-packages/airflow/" 2>/dev/null || true
     sudo uv pip install --system -r composer_requirements.txt
     echo "$req_hash" > /tmp/.composer_req_hash
   fi
@@ -50,6 +51,11 @@ init_airflow() {
     cached_db_version=$(cat /tmp/.airflow_db_version)
   fi
   if [ "$airflow_version" != "$cached_db_version" ]; then
+    if [ -z "$airflow_version" ]; then
+      echo "エラー: Airflow バージョンの取得に失敗しました"
+      exit 1
+    fi
+
     original_ifs="$IFS"
     IFS='.'
     set -- $airflow_version

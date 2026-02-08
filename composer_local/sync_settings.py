@@ -19,8 +19,6 @@ from typing import Optional
 from composer_local import errors
 from composer_local.utils import require_gcp_composer
 
-service_v1 = require_gcp_composer()
-
 LOG = logging.getLogger(__name__)
 
 
@@ -35,6 +33,7 @@ def fetch_composer_env_details(project_id: str, location: str, env_name: str) ->
     Returns:
         dict: キーとして image_version, python_version, location, env_name を持つ辞書
     """
+    service_v1 = require_gcp_composer()
     client = service_v1.EnvironmentsClient()
     name = _compose_env_resource_name(project_id, location, env_name)
     try:

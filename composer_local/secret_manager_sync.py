@@ -31,8 +31,6 @@ from typing import Any
 from composer_local import composer_settings, constants, errors
 from composer_local.utils import require_gcp_secret_manager
 
-secretmanager, DefaultCredentialsError = require_gcp_secret_manager()
-
 LOG = logging.getLogger(__name__)
 
 
@@ -205,6 +203,7 @@ class SecretManagerSync:
     def _get_client(self):
         """Secret Manager クライアントを初期化する。"""
         if self.client is None:
+            secretmanager, DefaultCredentialsError = require_gcp_secret_manager()
             try:
                 self.client = secretmanager.SecretManagerServiceClient()
             except DefaultCredentialsError:

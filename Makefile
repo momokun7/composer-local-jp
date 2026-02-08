@@ -1,3 +1,5 @@
+.DEFAULT_GOAL := help
+
 _DUMMY := $(shell uv run --active --quiet -- python scripts/load_make_settings.py > .make-settings.mk 2>/dev/null || true)
 -include .make-settings.mk
 .make-settings.mk:;
@@ -104,6 +106,13 @@ help:
 	@echo "  create-admin       Airflow Admin ユーザーを作成"
 	@echo ""
 	@echo "  クイックスタート: make import && make start"
+	@echo ""
+	@echo "  【カスタマイズ例】"
+	@echo "  make start PORT=9090          ポートを変更して起動"
+	@echo "  make start ENV=staging        環境名を指定して起動"
+	@echo "  make logs LINES=50            最新50行のログを表示"
+	@echo ""
+	@echo "  詳細: uv run -- composer-local --help"
 
 import:
 	@uv sync
@@ -113,11 +122,11 @@ import-gcp:
 
 start:
 	$(call ensure_env_exists)
-	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.start_foreground()"
+	@uv run --active -- composer-local start $(ENV)
 
 stop:
-	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.stop()" \
-		|| (echo "停止に失敗しました。" && exit 1)
+	$(call check_env_exists)
+	@uv run --active -- composer-local stop $(ENV)
 
 remove:
 	$(call check_env_exists)
@@ -133,7 +142,7 @@ recreate:
 
 status:
 	$(call check_env_exists)
-	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.describe()"
+	@uv run --active -- composer-local describe $(ENV)
 
 logs:
 	$(call check_env_running)
@@ -149,6 +158,14 @@ sync-vars:
 		--local-env-dir $(PWD)/composer/$(ENV) || exit 1
 
 sync-vars-sm:
+	@if [ -z "$(SECRET_ID)" ]; then \
+		echo ""; \
+		echo "SECRET_ID の指定が必要です。使用例:"; \
+		echo "  make sync-vars-sm SECRET_ID=xxx"; \
+		echo "  または composer_settings.py で SECRET_ID を設定"; \
+		echo ""; \
+		exit 1; \
+	fi
 	$(call check_gcp_settings)
 	$(call check_env_running)
 	@uv run --active -- python composer_local/export_composer_variables.py \

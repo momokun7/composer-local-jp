@@ -6,17 +6,17 @@
 
 ### 報告方法
 
-**重要: セキュリティ脆弱性は公開のIssueとして報告しないでください。**
+**重要: セキュリティ脆弱性は公開の Issue として報告しないでください。**
 
-以下のいずれかの方法で報告してください：
+以下の方法で報告してください:
 
-1. GitHubのSecurity Advisoriesを使用
-   - リポジトリの「Security」タブから「Report a vulnerability」をクリック
+1. GitHub の Security Advisories を使用
+   - リポジトリの「Security」タブから「Report a vulnerability」をクリックしてください
 
 
 ### 報告に含めるべき情報
 
-- 脆弱性の種類（例: SQL Injection, XSS, CSRF等）
+- 脆弱性の種類（例: SQL Injection, XSS, CSRF 等）
 - 脆弱性の場所（ファイル名、行番号）
 - 再現手順
 - 潜在的な影響
@@ -28,28 +28,31 @@
 ### 開発者向け
 
 1. **機密情報の管理**
-   - `composer_settings.py`は必ず`.gitignore`に追加されていることを確認
-   - APIキー、パスワード、トークンをコードにハードコードしない
-   - `.env`ファイルを使用する場合は必ず`.gitignore`に追加
+   - `composer_settings.py` は `.gitignore` に追加されていることを確認してください
+   - API キー、パスワード、トークンをコードにハードコードしないでください
+   - `.env` ファイルを使用する場合は必ず `.gitignore` に追加してください
 
 2. **認証情報**
-   - GCPサービスアカウントキーをリポジトリにコミットしない
-   - `gcloud auth application-default login`を使用して認証
+   - GCP サービスアカウントキーをリポジトリにコミットしないでください
+   - `gcloud auth application-default login` を使用して認証してください
 
 3. **依存関係の管理**
-   - 定期的に`uv lock --upgrade`を実行して依存関係を更新
-   - セキュリティアドバイザリを確認
+   - 定期的に `uv lock --upgrade` を実行して依存関係を更新してください
+   - セキュリティアドバイザリを確認してください
 
 ### ユーザー向け
 
 1. **初回セットアップ**
-   ```bash
-   # 設定ファイルをテンプレートからコピー
-   cp composer_local/composer_settings.py.example composer_local/composer_settings.py
 
-   # 自分の認証情報を設定
-   # vi composer_local/composer_settings.py
+   `composer_settings.py` のコピーは必須ではありません。デフォルト値で動作するため、設定をカスタマイズしたい場合のみコピーしてください。
+
+   ```bash
+   # （任意）設定をカスタマイズする場合のみテンプレートからコピー
+   cp composer_local/composer_settings.py.example composer_local/composer_settings.py
+   # 必要に応じて編集してください
    ```
+
+   コピーした場合は、実際の認証情報やプロジェクト ID を Git にコミットしないよう注意してください。
 
 2. **本番環境での使用禁止**
    - このツールはローカル開発・テスト環境専用です
@@ -57,9 +60,9 @@
 
 3. **定期的な更新**
    - 最新版への更新を推奨します
-   - `git pull`後は依存関係も更新してください
+   - `git pull` 後は依存関係も更新してください
 
 ## 既知の制限事項
 
-- ローカル環境のAirflowは開発用途のみを想定
-- Dockerコンテナは特権モードで実行される可能性があるため、信頼できる環境でのみ使用
+- ローカル環境の Airflow は開発用途のみを想定しています
+- Docker コンテナは特権モードで実行される可能性があるため、信頼できる環境でのみ使用してください

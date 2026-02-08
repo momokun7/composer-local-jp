@@ -8,7 +8,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 
 - **ローカルファースト** - GCP 設定不要で `make import && make start` だけで Airflow が動く
 - **簡単セットアップ** - `make start` 一発で完全な Airflow 環境を構築（初回は自動作成）
-- **GCP 連携はオプション** - Secret Manager・Variables 同期が必要な場合のみ設定
+- **GCP 連携はオプション** - Secret Manager・Airflow Variables（変数）同期が必要な場合のみ設定
 - **Composer 3 対応** - 最新の Airflow 2.10.5 + PostgreSQL
 - **uv による高速な依存関係管理**
 
@@ -28,7 +28,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 | **uv** | `uv --version` | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
 
 - メモリ: Docker Desktop に **4GB 以上**を割り当ててください
-- GCP 連携する場合のみ [gcloud CLI](https://cloud.google.com/sdk/docs/install) が追加で必要です
+- GCP と連携する場合のみ、[gcloud CLI](https://cloud.google.com/sdk/docs/install) が追加で必要です
 
 ---
 
@@ -53,14 +53,24 @@ make start
 > **http://localhost:8080**
 >
 > ログイン不要です（`AUTH_ROLE_PUBLIC` が設定済みのため、認証なしでアクセスできます）。
+>
+> Airflow の DAGs 一覧が表示されれば起動成功です。
 
 停止するには `Ctrl+C` を押してください。
 
 > **Tip**: GCP の設定や `composer_settings.py` のコピーは不要です。デフォルト値で動作します。
 
+### 停止と再起動
+
+| 操作 | コマンド | 説明 |
+|------|---------|------|
+| 停止 | `make stop` | コンテナを停止します。データや設定は保持されます |
+| 再起動 | `make start` | 停止した環境をそのまま再起動します |
+| リセット | `make remove` | 環境を完全に削除します。次回 `make start` で再作成されます |
+
 ### 設定のカスタマイズ（任意）
 
-ポートやイメージバージョンを変更したい場合:
+ポートやイメージバージョンを変更したい場合は、以下のようにコピーして編集してください。
 
 ```bash
 cp composer_local/composer_settings.py.example composer_local/composer_settings.py
@@ -69,7 +79,7 @@ cp composer_local/composer_settings.py.example composer_local/composer_settings.
 
 ### GCP 連携（任意）
 
-GCP プロジェクトとの Variables 同期や認証連携が必要な場合は [GCP 連携ガイド](docs/gcp-integration.md) を参照してください。
+GCP プロジェクトとの Variables 同期や認証連携が必要な場合は、[GCP 連携ガイド](docs/gcp-integration.md) を参照してください。
 
 ```bash
 # GCP パッケージの追加インストール
@@ -100,21 +110,26 @@ make import-gcp
 | `make import-gcp` | GCP 連携パッケージをインストール | - |
 | `make auth-user` | GCP ユーザー認証 | `PROJECT=...`（任意） |
 | `make auth-sa` | GCP サービスアカウント認証 | `SERVICE_ACCOUNT=...` |
-| `make sync-vars` | Cloud Composer → ローカルへ Variables を同期 | `PROJECT=... LOCATION=... ENV_NAME=...` |
+| `make sync-vars` | Cloud Composer → ローカルへ Airflow Variables（変数）を同期 | `PROJECT=... LOCATION=... ENV_NAME=...` |
 | `make sync-vars-sm` | Secret Manager 経由で Variables を同期 | `PROJECT=... LOCATION=... ENV_NAME=... SECRET_ID=...` |
 | `make sync-settings` | Cloud Composer の設定を同期 | `PROJECT=... LOCATION=... ENV_NAME=...` |
-| `make setup-connections` | Google Cloud のデフォルト接続を設定 | - |
-| `make create-admin` | Airflow Admin ユーザーを作成 | `USERNAME=... PASSWORD=...`（任意） |
 
 詳細は [GCP 連携ガイド](docs/gcp-integration.md) を参照してください。
+
+### メンテナンスコマンド
+
+| コマンド | 説明 | 必要な引数 |
+|---------|------|-----------|
+| `make setup-connections` | Google Cloud のデフォルト接続を設定 | - |
+| `make create-admin` | Airflow Admin ユーザーを作成 | `USERNAME=... PASSWORD=...`（任意） |
 
 ---
 
 ## DAG の開発
 
-- デフォルトの DAG ディレクトリ: `./dags`
-- ファイルを更新すると再起動なしで自動反映されます（デフォルト10秒間隔）
-- DAG ディレクトリは `composer_settings.py` の `DAGS_PATH` で変更可能
+- デフォルトの DAG ディレクトリは `./dags` です
+- ファイルを更新すると再起動なしで自動反映されます（デフォルト 10 秒間隔）
+- DAG ディレクトリは `composer_settings.py` の `DAGS_PATH` で変更できます
 
 ---
 
@@ -122,7 +137,7 @@ make import-gcp
 
 `composer_settings.py.example` をコピーして `composer_settings.py` を作成すると、各種設定をカスタマイズできます。**GCP 未設定でもデフォルト値で動作する**ため、コピーは必須ではありません。
 
-各設定項目の詳細は `composer_settings.py.example` のコメントを参照してください。
+各設定項目の詳細は、`composer_settings.py.example` のコメントを参照してください。
 
 ---
 
@@ -139,6 +154,29 @@ make import-gcp
 ---
 
 ## トラブルシューティング
+
+<details>
+<summary><strong>uv がインストールされていない</strong></summary>
+
+**エラー:** `uv: command not found` または `make import` 実行時にエラーが発生する
+
+**対処:**
+
+`uv` は Python パッケージマネージャーです。以下のコマンドでインストールしてください。
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Homebrew（macOS）
+brew install uv
+```
+
+インストール後、シェルを再起動するか `source ~/.bashrc`（または `~/.zshrc`）を実行してください。
+
+詳細は [uv 公式ドキュメント](https://docs.astral.sh/uv/getting-started/installation/) を参照してください。
+
+</details>
 
 <details>
 <summary><strong>Docker がインストールされていない / 起動していない</strong></summary>
@@ -214,4 +252,4 @@ PostgreSQL のポート（デフォルト: 25432）が競合する場合は、`c
 
 ## 貢献
 
-Issue や Pull Request を歓迎します。大きな変更の場合は、まず Issue で議論してください。
+Issue や Pull Request を歓迎しています。大きな変更の場合は、まず Issue で議論してください。
