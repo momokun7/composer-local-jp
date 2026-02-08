@@ -143,6 +143,23 @@ make import-gcp
 
 ---
 
+## プロジェクト構造
+
+```
+composer-local-jp/
+├── Makefile                    # コマンドインターフェース
+├── composer_local/             # メインパッケージ
+│   ├── cli.py                  # CLI コマンド定義
+│   ├── environment.py          # Docker 環境管理
+│   ├── constants.py            # 定数・メッセージ
+│   └── docker_files/           # コンテナ内ファイル
+├── dags/                       # DAG ファイル
+├── docs/                       # 追加ドキュメント
+└── tests/                      # テスト
+```
+
+---
+
 ## 設定ファイル
 
 `composer_settings.py.example` をコピーして `composer_settings.py` を作成すると、各種設定をカスタマイズできます。**GCP 未設定でもデフォルト値で動作する**ため、コピーは必須ではありません。

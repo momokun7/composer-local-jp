@@ -28,6 +28,7 @@ CONTAINER_NAME  ?= composer-local-dev
 .PHONY: help import import-gcp start stop status logs \
         remove recreate \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
+        test lint format \
         clean auth-user auth-sa
 
 define check_gcp_settings
@@ -102,6 +103,9 @@ help:
 	@echo "  sync-settings     Cloud Composer の設定を同期"
 	@echo ""
 	@echo "  【メンテナンス】"
+	@echo "  test              テストを実行"
+	@echo "  lint              構文チェック"
+	@echo "  format            コードフォーマット（black + isort）"
 	@echo "  setup-connections  Google Cloud のデフォルト接続を設定"
 	@echo "  create-admin       Airflow Admin ユーザーを作成"
 	@echo ""
@@ -224,6 +228,21 @@ auth-sa:
 		--impersonate-service-account=$(SERVICE_ACCOUNT) \
 		|| (echo "サービスアカウント認証に失敗しました。" && exit 1)
 	@echo "Composerのサービスアカウントによる認証が完了しました。"
+
+test:
+	@uv run pytest tests/ -v
+
+lint:
+	@uv run python -m py_compile composer_local/cli.py
+	@uv run python -m py_compile composer_local/environment.py
+	@uv run python -m py_compile composer_local/errors.py
+	@uv run python -m py_compile composer_local/utils.py
+	@uv run python -m py_compile composer_local/constants.py
+	@echo "構文チェック完了"
+
+format:
+	@uv run black composer_local/ tests/ || echo "black がインストールされていません: uv pip install black"
+	@uv run isort composer_local/ tests/ || echo "isort がインストールされていません: uv pip install isort"
 
 clean:
 	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + || true

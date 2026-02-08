@@ -400,62 +400,58 @@ def sync_vars(
     console.get_console().print(f"プロジェクト: {resolved_project}")
     console.get_console().print(f"シークレット ID: {secret_id}")
 
+    from composer_local import secret_manager_sync
+
+    sync_client = secret_manager_sync.create_sync_client(
+        project_id=resolved_project,
+        local_env_path=env_path,
+    )
+    sync_client.secret_id = secret_id
+
+    variables_json_path = env_path / "data" / "variables.json"
+    imported_successfully = False
+
+    # ---- Step 1: Secret Manager から Variables を取得・書き出し ----
     try:
-        from composer_local import secret_manager_sync
-
-        sync_client = secret_manager_sync.create_sync_client(
-            project_id=resolved_project,
-            local_env_path=env_path,
-        )
-        # ensure single-secret id is used
-        sync_client.secret_id = secret_id
-
-        # Secret ManagerからVariablesを同期（削除→インポートを統合処理）
         sync_client.sync_to_local_airflow(env)
-
-        # Try to import into running local Airflow immediately;
-        # otherwise leave for auto-import on next start
-        variables_json_path = env_path / "data" / "variables.json"
-        try:
-            from composer_local import constants as _c
-
-            if variables_json_path.is_file():
-                try:
-                    # If app is running, import now
-                    status = env.status()
-                    if str(status).lower() == str(_c.ContainerStatus.RUNNING):
-                        console.get_console().print(
-                            "起動中の Airflow へ Variables をインポートします..."
-                        )
-                        env.run_airflow_command(
-                            [
-                                "variables",
-                                "import",
-                                "/home/airflow/gcs/data/variables.json",
-                            ]
-                        )
-                        # Remove after successful import
-                        try:
-                            variables_json_path.unlink()
-                            console.get_console().print(
-                                "一時ファイル variables.json を削除しました"
-                            )
-                        except Exception as e:
-                            LOG.debug(f"一時ファイル削除失敗: {e}")
-                    else:
-                        console.get_console().print(
-                            "ローカル Airflow が起動していません。次回起動時に自動インポートされます。"
-                        )
-                except Exception as ie:
-                    console.get_console().print(f"Variables のインポートに失敗しました: {ie}")
-        except Exception as e:
-            LOG.warning(f"Variables インポート失敗: {e}")
-
-        console.get_console().print("Variables の同期が完了しました！")
-
     except Exception as e:
         console.get_console().print(f"Variables の同期でエラーが発生しました: {e}")
         raise
+
+    # ---- Step 2: 起動中の Airflow へ即時インポート ----
+    try:
+        if variables_json_path.is_file():
+            status = env.status()
+            if str(status).lower() == str(constants.ContainerStatus.RUNNING):
+                console.get_console().print(
+                    "起動中の Airflow へ Variables をインポートします..."
+                )
+                env.run_airflow_command(
+                    [
+                        "variables",
+                        "import",
+                        "/home/airflow/gcs/data/variables.json",
+                    ]
+                )
+                imported_successfully = True
+            else:
+                console.get_console().print(
+                    "ローカル Airflow が起動していません。次回起動時に自動インポートされます。"
+                )
+    except Exception as e:
+        console.get_console().print(f"Variables のインポートに失敗しました: {e}")
+
+    # ---- Step 3: クリーンアップ（インポート成功時のみ一時ファイルを削除） ----
+    if imported_successfully:
+        try:
+            variables_json_path.unlink()
+            console.get_console().print(
+                "一時ファイル variables.json を削除しました"
+            )
+        except Exception as e:
+            LOG.debug(f"一時ファイル削除失敗: {e}")
+
+    console.get_console().print("Variables の同期が完了しました！")
 
 
 @cli.command(name="sync-settings")
