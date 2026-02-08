@@ -59,7 +59,7 @@ init_airflow() {
     echo "$airflow_version" > /tmp/.airflow_db_version
   fi
 
-  # Do NOT override AUTH_ROLE_PUBLIC. Keep default auth; no public admin.
+  # webserver_config.py で AUTH_ROLE_PUBLIC='Admin' を設定済み（ログイン画面スキップ）
 }
 
 create_user() {
@@ -83,6 +83,10 @@ create_user() {
 main() {
   mkdir -p /home/airflow/airflow
   sudo chown airflow:airflow /home/airflow/airflow
+
+  # webserver_config.py を Airflow 設定ディレクトリに配置（ログイン画面スキップ）
+  { cp /home/airflow/webserver_config.py /home/airflow/airflow/webserver_config.py && \
+    chown airflow:airflow /home/airflow/airflow/webserver_config.py; } 2>/dev/null || true
 
   sudo chmod +x $run_as_user
 
