@@ -98,11 +98,11 @@ Cloud Composer → Secret Manager → ローカル環境の順に同期します
 
 ```bash
 make sync-vars-sm
-# または設定ファイルなしで実行（SECRET_ID を指定）
-make sync-vars-sm SECRET_ID=your-secret-id
+# または設定ファイルなしで実行（PROJECT, LOCATION, ENV_NAME, SECRET_ID をすべて指定）
+make sync-vars-sm PROJECT=xxx LOCATION=xxx ENV_NAME=xxx SECRET_ID=your-secret-id
 ```
 
-Secret Manager のシークレット ID は `composer_settings.py` で設定するか、上記のようにコマンドラインで直接指定できます。
+> **Note**: `sync-vars-sm` には `PROJECT`, `LOCATION`, `ENV_NAME`, `SECRET_ID` の 4 つすべてが必要です。`composer_settings.py` で設定するか、上記のようにコマンドラインで直接指定できます。
 
 ## 設定の同期
 
@@ -111,6 +111,34 @@ Cloud Composer の設定を `composer_settings.py` に同期できます:
 ```bash
 make sync-settings
 ```
+
+## 必要な IAM 権限
+
+GCP 連携の各機能を利用するために、以下の IAM 権限が必要です。
+
+| 機能 | 必要な権限 | 説明 |
+|------|-----------|------|
+| `sync-vars` | `composer.environments.get` | Composer 環境から Variables を取得 |
+| `sync-vars-sm` | `composer.environments.get` | Composer 環境から Variables をエクスポート |
+| `sync-vars-sm` | `secretmanager.versions.access` | Secret Manager からシークレットを読み取り |
+| `sync-vars-sm` | `secretmanager.versions.add` | Secret Manager にシークレットを書き込み |
+| `sync-settings` | `composer.environments.get` | Composer 環境の設定を取得 |
+| `auth-sa` | `iam.serviceAccounts.getAccessToken` | サービスアカウントの権限借用 |
+
+> **Tip**: 最小権限の原則に従い、必要な権限のみを付与してください。開発用途であれば、`roles/composer.user` と `roles/secretmanager.secretAccessor` のロールで多くのケースをカバーできます。
+
+## sync-settings の同期内容
+
+`make sync-settings` は Cloud Composer 環境から以下の情報を取得し、ローカルの `composer_settings.py` に反映します。
+
+| 設定項目 | 説明 |
+|---------|------|
+| `COMPOSER_IMAGE_VERSION` | Composer のイメージバージョン（例: `composer-3-airflow-2.10.5-build.0`） |
+| `COMPOSER_PYTHON_VERSION` | Python のメジャー/マイナーバージョン |
+| `COMPOSER_ENV_NAME` | Composer 環境名 |
+| `COMPOSER_LOCATION` | Composer 環境のロケーション |
+
+これにより、ローカル環境を本番の Composer 環境と同じイメージバージョンで動作させることができます。
 
 ## コマンド一覧
 

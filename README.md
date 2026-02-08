@@ -46,6 +46,8 @@ make import
 make start
 ```
 
+> **Note**: 初回起動時は Docker イメージのプルに数分〜十数分かかる場合があります。ネットワーク環境によって所要時間は異なります。2 回目以降はキャッシュが使われるため高速に起動します。
+
 起動が完了すると `起動完了` と表示され、`Ctrl+C で停止します...` のメッセージが出ます。
 
 > **別のターミナルを開いて** ブラウザで Airflow Web UI にアクセスしてください:
@@ -129,6 +131,9 @@ make import-gcp
 
 | コマンド | 説明 | 必要な引数 |
 |---------|------|-----------|
+| `make test` | テストを実行（pytest） | - |
+| `make lint` | 構文チェック | - |
+| `make format` | コードフォーマット（black + isort） | - |
 | `make setup-connections` | Google Cloud のデフォルト接続を設定 | - |
 | `make create-admin` | Airflow Admin ユーザーを作成 | `USERNAME=... PASSWORD=...`（任意） |
 
@@ -149,6 +154,23 @@ make import-gcp
 1. `dags/` ディレクトリに新しい `.py` ファイルを配置（ファイル名: `dag_id_*.py` など）
 2. Airflow UI にアクセスして、DAGs 一覧をリロード（F5 キー）
 3. ログで確認: `make logs LINES=50`（DAG パースエラーがないか確認）
+
+### DAG のデバッグ
+
+`run-airflow` サブコマンドを使って、特定の DAG をコマンドラインからテスト実行できます。
+
+```bash
+# DAG のテスト実行（EXECUTION_DATE は任意の日付）
+make run-airflow -- dags test DAG_ID EXECUTION_DATE
+
+# 例: hello_world_dag を 2025-01-01 で実行
+uv run --active -- composer-local run-airflow my-local-env dags test hello_world_dag 2025-01-01
+
+# DAG のリスト表示
+uv run --active -- composer-local run-airflow my-local-env dags list
+```
+
+> **Tip**: `dags test` は実際のスケジューラを経由せず単一の DAG Run を実行するため、開発中のデバッグに便利です。
 
 ---
 
@@ -188,6 +210,20 @@ composer-local-jp/
 > 本ツールはローカル開発・テスト専用です。管理者アカウント（admin/admin）やログインスキップ設定は開発環境のみで使用してください。
 
 詳細は [SECURITY.md](SECURITY.md) を参照してください。
+
+---
+
+## アップグレード
+
+リポジトリの最新版に更新するには、以下のコマンドを実行してください。
+
+```bash
+git pull && make import
+```
+
+GCP 連携パッケージを使用している場合は、`make import` の代わりに `make import-gcp` を実行してください。
+
+> **Note**: 破壊的変更がある場合は [CHANGELOG](CHANGELOG.md) を確認してください。
 
 ---
 

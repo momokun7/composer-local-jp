@@ -23,12 +23,13 @@ ENV_NAME        ?= $(_CS_ENV_NAME)
 SECRET_ID       ?= $(_CS_SECRET_ID)
 SERVICE_ACCOUNT ?= $(_CS_SA)
 
+FOLLOW          ?=
 CONTAINER_NAME  ?= composer-local-dev
 
 .PHONY: help import import-gcp start stop status logs \
         remove recreate \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
-        test lint format \
+        test test-dags lint format \
         clean auth-user auth-sa
 
 define check_gcp_settings
@@ -113,13 +114,15 @@ help:
 	@echo "  【環境管理】"
 	@echo "  status            環境の設定とステータスを表示（Docker コンテナ状態含む）"
 	@echo "  logs              ログを表示"
-	@echo "                      オプション: LINES（行数指定。例: make logs LINES=50）"
+	@echo "                      オプション: LINES, FOLLOW=true"
+	@echo "  test-dags         DAG の構文チェック（インポートエラーを検出）"
 	@echo "  remove            環境を削除"
 	@echo "  recreate          環境を削除して再作成・起動（削除失敗時も続行）"
 	@echo "  clean             キャッシュやビルド生成物を削除"
 	@echo ""
 	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）※ 詳細: docs/gcp-integration.md】"
 	@echo "  auth-user         GCP ユーザー認証（個人アカウント）"
+	@echo "                      オプション: PROJECT"
 	@echo "  auth-sa           GCP サービスアカウント認証"
 	@echo "                      必須: SERVICE_ACCOUNT"
 	@echo "  sync-vars         Cloud Composer → ローカルへ Variables を同期"
@@ -154,6 +157,7 @@ import-gcp:
 	@uv sync --extra gcp
 
 start:
+	@if [ ! -d ".venv" ]; then echo "依存関係をインストールしています..."; $(MAKE) import; fi
 	$(call ensure_env_exists)
 	@uv run --active -- composer-local start $(ENV)
 
@@ -179,7 +183,11 @@ status:
 
 logs:
 	$(call check_env_running)
-	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all)
+	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all) $(if $(FOLLOW),--follow)
+
+test-dags:
+	$(call check_env_running)
+	@uv run --active -- composer-local run-airflow $(ENV) -- dags list-import-errors
 
 sync-vars:
 	$(call check_gcp_settings)
@@ -256,12 +264,8 @@ test:
 	@uv run pytest tests/ -v
 
 lint:
-	@uv run python -m py_compile composer_local/cli.py
-	@uv run python -m py_compile composer_local/environment.py
-	@uv run python -m py_compile composer_local/errors.py
-	@uv run python -m py_compile composer_local/utils.py
-	@uv run python -m py_compile composer_local/constants.py
-	@echo "構文チェック完了"
+	@uv run --active -- ruff check composer_local/ scripts/ tests/
+	@echo "lint OK"
 
 format:
 	@uv run black composer_local/ tests/ || echo "black がインストールされていません: uv pip install black"

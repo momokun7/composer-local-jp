@@ -25,47 +25,39 @@ gcp = [
     "google-cloud-secret-manager>=2.0.0",
 ]
 dev = [
-    "black>=24.2.0,<25.0.0",
-    "isort>=5.13.2,<6.0.0",
-    "pyproject-flake8>=6.1.0,<7.0.0",
+    "ruff>=0.8.0",
     "pytest>=8.0.0,<9.0.0",
+    "pytest-cov>=6.0.0,<7.0.0",
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 100
+target-version = "py311"
 
-[tool.isort]
-profile = "black"
-line_length = 100
-
-[tool.flake8]
-max-line-length = 100
-max-complexity = 18
-ignore = "E203,W503,W504"
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E203"]
 exclude = [
     ".venv",
     "venv",
     ".git",
     "__pycache__",
-    "*.pyc",
     ".pytest_cache",
     "site-packages",
-    ".venv/lib/python*/site-packages",
     "**/site-packages/**",
-    "**/google/api_core/grpc_helpers.py",
     "**/google/**",
-    "**/grpc_helpers.py",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=composer_local --cov-report=term-missing"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["black>=24.10.0", "isort>=5.13.2", "pyproject-flake8>=6.1.0", "pytest>=8.0.0"]
+dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0"]
 
 [tool.hatch.version]
 path = "composer_local/version.py"

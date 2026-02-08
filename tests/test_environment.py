@@ -13,7 +13,6 @@ import pytest
 from composer_local import composer_settings, constants, errors
 from composer_local.environment import Environment, EnvironmentConfig
 
-
 # =============================================================================
 # ヘルパー: config.json を一時ディレクトリに書き出す
 # =============================================================================
@@ -452,3 +451,84 @@ class TestEnvironmentPort:
             port=None,
         )
         assert env.port == composer_settings.LOCAL_PORT
+
+
+# =============================================================================
+# Environment._poll_until_ready のテスト
+# =============================================================================
+
+
+class TestEnvironmentPollUntilReady:
+    """_poll_until_ready メソッドのテスト."""
+
+    def test_timeout_raises_error(self, sample_env):
+        """check_fn が常に False を返す場合、タイムアウトで ComposerCliError が発生すること."""
+        with pytest.raises(errors.ComposerCliError, match="テスト用タイムアウト"):
+            sample_env._poll_until_ready(
+                check_fn=lambda: False,
+                timeout_seconds=0,
+                interval_seconds=0.01,
+                label="テスト待機中",
+                timeout_message="テスト用タイムアウト",
+            )
+
+    def test_returns_immediately_when_ready(self, sample_env):
+        """check_fn が即座に True を返す場合、正常に完了すること."""
+        # 例外が発生しなければ成功
+        sample_env._poll_until_ready(
+            check_fn=lambda: True,
+            timeout_seconds=5,
+            interval_seconds=0.01,
+            label="テスト待機中",
+            timeout_message="テスト用タイムアウト",
+        )
+
+    def test_succeeds_after_retries(self, sample_env):
+        """check_fn が数回 False を返した後に True を返す場合、正常に完了すること."""
+        call_count = {"n": 0}
+
+        def check_fn():
+            call_count["n"] += 1
+            return call_count["n"] >= 3
+
+        sample_env._poll_until_ready(
+            check_fn=check_fn,
+            timeout_seconds=5,
+            interval_seconds=0.01,
+            label="テスト待機中",
+            timeout_message="テスト用タイムアウト",
+        )
+        assert call_count["n"] >= 3
+
+
+# =============================================================================
+# Environment._wait_for_db_ready のテスト
+# =============================================================================
+
+
+class TestEnvironmentWaitForDbReady:
+    """_wait_for_db_ready メソッドのテスト."""
+
+    def test_timeout_raises_error(self, sample_env):
+        """DB が healthy にならない場合、タイムアウトで ComposerCliError が発生すること."""
+        mock_db = MagicMock()
+        mock_db.attrs = {"State": {"Health": {"Status": "starting"}}}
+
+        with pytest.raises(errors.ComposerCliError, match="PostgreSQL"):
+            sample_env._wait_for_db_ready(
+                mock_db,
+                timeout_seconds=0,
+                interval_seconds=0.01,
+            )
+
+    def test_returns_when_healthy(self, sample_env):
+        """DB が healthy の場合、即座に正常完了すること."""
+        mock_db = MagicMock()
+        mock_db.attrs = {"State": {"Health": {"Status": "healthy"}}}
+
+        # 例外が発生しなければ成功
+        sample_env._wait_for_db_ready(
+            mock_db,
+            timeout_seconds=5,
+            interval_seconds=0.01,
+        )
