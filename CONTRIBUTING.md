@@ -32,11 +32,8 @@
 git clone https://github.com/yourusername/composer-local-jp.git
 cd composer-local-jp
 
-# 環境のセットアップ
-make import
-
 # 依存パッケージのインストール
-pip install -r requirements.txt
+make import
 
 # テスト実行（既存テストがある場合）
 make test
