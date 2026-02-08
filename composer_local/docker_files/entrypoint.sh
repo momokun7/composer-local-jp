@@ -1,18 +1,18 @@
 #!/bin/sh
 
-set -xe
+set -e
 
 run_as_user=/home/airflow/run_as_user.sh
 
 init_airflow() {
   echo "=== [3/5] パッケージインストール ==="
 
-  $run_as_user mkdir -p ${AIRFLOW__CORE__DAGS_FOLDER}
-  $run_as_user mkdir -p ${AIRFLOW__CORE__PLUGINS_FOLDER}
-  $run_as_user mkdir -p ${AIRFLOW__CORE__DATA_FOLDER}
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__DAGS_FOLDER}"
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__PLUGINS_FOLDER}"
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__DATA_FOLDER}"
 
   if [ -f /var/local/setup_python_command.sh ]; then
-      $run_as_user /var/local/setup_python_command.sh
+      "$run_as_user" /var/local/setup_python_command.sh
   fi
 
   # uv がなければインストール（初回のみ、バイナリ直接DLで高速）
@@ -39,9 +39,9 @@ init_airflow() {
   echo "=== [4/5] データベースマイグレーション ==="
 
   # airflow version を高速取得（airflow コマンドのフル import を回避）
-  airflow_version=$($run_as_user python3 -c "from importlib.metadata import version; print(version('apache-airflow'))" 2>/dev/null)
+  airflow_version=$("$run_as_user" python3 -c "from importlib.metadata import version; print(version('apache-airflow'))" 2>/dev/null)
   if [ -z "$airflow_version" ]; then
-    airflow_version=$(${run_as_user} airflow version | grep -o "^[0-9\.]*")
+    airflow_version=$("${run_as_user}" airflow version | grep -o "^[0-9\.]*")
   fi
 
   # db migrate はバージョン変更時のみ実行（2回目以降スキップで大幅高速化）
@@ -58,13 +58,13 @@ init_airflow() {
     IFS="$original_ifs"
 
     if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
-      if ! $run_as_user airflow db init; then
+      if ! "$run_as_user" airflow db init; then
         echo "エラー: データベース初期化に失敗しました"
         echo "make recreate で環境を再作成してください"
         exit 1
       fi
     else
-      if ! $run_as_user airflow db migrate; then
+      if ! "$run_as_user" airflow db migrate; then
         echo "エラー: データベースマイグレーションに失敗しました"
         echo "make recreate で環境を再作成してください"
         exit 1
@@ -107,7 +107,7 @@ main() {
       echo "警告: webserver_config.py の配置に失敗しました（ログイン画面が表示されます）"
   fi
 
-  sudo chmod +x $run_as_user
+  sudo chmod +x "$run_as_user"
 
   echo "=== [2/5] ユーザー作成 ==="
 
@@ -122,13 +122,13 @@ main() {
 
   echo "=== [5/5] Airflow サービス起動 ==="
 
-  if [ ${AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR} = "True" ]; then
-    $run_as_user airflow dag-processor &
+  if [ "${AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR}" = "True" ]; then
+    "$run_as_user" airflow dag-processor &
   fi
 
-  $run_as_user airflow scheduler &
-  $run_as_user airflow triggerer &
-  exec $run_as_user airflow webserver
+  "$run_as_user" airflow scheduler &
+  "$run_as_user" airflow triggerer &
+  exec "$run_as_user" airflow webserver
 }
 
 main "$@"

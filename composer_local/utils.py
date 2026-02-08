@@ -7,7 +7,6 @@ import subprocess
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
-import click
 import rich.box
 import rich.table
 from rich.logging import RichHandler
@@ -71,10 +70,6 @@ def resolve_gcloud_config_path() -> str:
     if config_path.is_dir():
         return str(config_path)
     raise errors.ComposerCliError(constants.GCLOUD_CONFIG_NOT_FOUND_ERROR)
-
-
-def resolve_kube_config_path() -> Optional[str]:
-    return os.environ.get(constants.KUBECONFIG_PATH_ENV)
 
 
 def create_plain_status_text(

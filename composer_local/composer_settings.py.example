@@ -2,16 +2,16 @@
 ローカル環境の Composer 設定ファイル。
 
 使い方:
-  1. このファイルを composer_settings.py にコピーする
-  2. 必要に応じて設定値を変更する（デフォルト値のまま動作可能）
+  1. このファイルを composer_settings.py にコピー
+  2. 必要に応じて設定値を変更（デフォルト値のまま動作可能）
 """
 
-# ローカル環境設定（必須）
+# --- ローカル環境 ---
 
-# ローカル環境名（コンテナ名のサフィックス。英数字・ハイフン・アンダースコア）
+# 環境名（コンテナ名のサフィックスになります）
 LOCAL_ENV_NAME = "my-local-env"
 
-# Airflow Web UI のポート番号（1024-65535）
+# Airflow Web UI のポート番号
 LOCAL_PORT = 8080
 
 # Composer Docker イメージバージョン（make sync-settings で自動同期可能）
@@ -20,85 +20,47 @@ COMPOSER_IMAGE_VERSION = "composer-3-airflow-2.10.5-build.13"
 # Python バージョン（空文字列 = イメージのデフォルトを使用）
 COMPOSER_PYTHON_VERSION = ""
 
-# DAG ディレクトリのパス（相対パスはプロジェクトルート基準）
+# DAG ディレクトリのパス（プロジェクトルートからの相対パス）
 DAGS_PATH = "dags"
 
-# GCP 連携設定（オプション）
-# GCP 連携を使う場合はコメントアウトを解除して値を設定。詳細は docs/gcp-integration.md を参照。
+# --- GCP 連携（オプション。使う場合はコメントアウトを解除） ---
+# 詳細は docs/gcp-integration.md を参照
 
-# Cloud Composer 環境名
-# COMPOSER_ENV_NAME = ""
-
-# Cloud Composer 環境のリージョン（例: "asia-northeast1"）
-# COMPOSER_LOCATION = ""
-
-# GCP プロジェクト ID
 # PROJECT_ID = ""
+# COMPOSER_LOCATION = ""       # 例: "asia-northeast1"
+# COMPOSER_ENV_NAME = ""
+# SERVICE_ACCOUNT = ""         # サービスアカウントのメールアドレス
+# SECRET_ID = ""               # Secret Manager のシークレット ID
 
-# サービスアカウントのメールアドレス
-# SERVICE_ACCOUNT = ""
+# --- Airflow ---
 
-# Secret Manager のシークレット ID（make sync-vars-sm 用。PROJECT_ID が必要）
-# SECRET_ID = ""
-
-# Airflow 設定
-
-# ローカル Airflow の URL（LOCAL_PORT と合わせること）
 AIRFLOW_URL = "http://localhost:8080"
 
-# 管理者アカウント（ローカル開発専用。本番の認証情報は使用しないこと）
+# 管理者アカウント（ローカル開発専用）
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_FIRSTNAME = "Admin"
 ADMIN_LASTNAME = "User"
 
-# データベース設定
+# --- データベース ---
 
-# データベースエンジン（"postgresql" または "mysql"）
 DATABASE_ENGINE = "postgresql"
-
-# PostgreSQL 接続設定（ローカル開発用）
 POSTGRES_USER = "postgres"
 POSTGRES_PASSWORD = "airflow"
 POSTGRES_DB = "airflow"
-
-# PostgreSQL コンテナ内部ポート（通常は変更不要。1024-65535）
 POSTGRES_PORT = 5432
+POSTGRES_LOCAL_PORT = 25432    # ホスト側の公開ポート（デバッグ用）
 
-# PostgreSQL ホスト側公開ポート（デバッグ用。1024-65535）
-POSTGRES_LOCAL_PORT = 25432
+# --- 詳細設定（通常は変更不要） ---
 
-# DAG ディレクトリの再読み込み間隔（秒。1以上）
-DAG_DIR_LIST_INTERVAL = 10
-
-# 同期・監視設定
-
-# Secret Manager 同期間隔（秒。SECRET_ID 設定時のみ有効）
-SYNC_INTERVAL = 300
-
-# Web サーバー起動待機タイムアウト（秒）
-WEBSERVER_TIMEOUT = 300
-
-# Web サーバー起動確認ポーリング間隔（秒）
-WEBSERVER_CHECK_INTERVAL = 2
-
-# Docker 設定
-
-# コンテナのメモリ制限（例: "2g", "4g", "512m"）
-DOCKER_MEMORY_LIMIT = "4g"
-
-# True: localhost のみにバインド、False: 外部アクセス可能（セキュリティ上 True を推奨）
-BIND_TO_LOCALHOST_ONLY = True
-
-# PostgreSQL の Docker イメージ
+DAG_DIR_LIST_INTERVAL = 10    # DAG ディレクトリの再読み込み間隔（秒）
+SYNC_INTERVAL = 300           # Secret Manager 同期間隔（秒）
+WEBSERVER_TIMEOUT = 300       # Web サーバー起動待機タイムアウト（秒）
+WEBSERVER_CHECK_INTERVAL = 2  # Web サーバー起動確認の間隔（秒）
+DOCKER_MEMORY_LIMIT = "4g"    # コンテナのメモリ制限
+BIND_TO_LOCALHOST_ONLY = True  # True: localhost のみ、False: 外部アクセス可能
 POSTGRES_IMAGE = "postgres:14-alpine"
-
-# Variables 処理設定
-
-# 並列処理の最大ワーカー数（Secret Manager 同期用）
-MAX_PARALLEL_WORKERS = 10
-
-# Variables 値のマスキング設定（ログ出力時に先頭/末尾の表示文字数）
-MASK_PREFIX_LENGTH = 4
-MASK_SUFFIX_LENGTH = 4
+MAX_PARALLEL_WORKERS = 10     # Secret Manager 同期の並列ワーカー数
+MASK_PREFIX_LENGTH = 4        # ログ出力時のマスキング（先頭表示文字数）
+MASK_SUFFIX_LENGTH = 4        # ログ出力時のマスキング（末尾表示文字数）

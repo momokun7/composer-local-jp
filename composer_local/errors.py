@@ -1,5 +1,5 @@
 import functools
-from typing import Optional, Tuple
+from typing import Tuple
 
 import click
 
@@ -30,13 +30,6 @@ class EnvironmentNotRunningError(ComposerCliError):
 
 class EnvironmentNotFoundError(EnvironmentNotRunningError):
     pass
-
-
-class EnvironmentStartError(ComposerCliError):
-    def __init__(self, msg: Optional[str] = None):
-        if msg is None:
-            msg = constants.ENVIRONMENT_FAILED_TO_START_ERROR
-        super().__init__(msg)
 
 
 class InvalidConfigurationError(ComposerCliError):
@@ -109,10 +102,16 @@ def catch_exceptions(func=None):
                 from google.auth import exceptions as auth_exception
 
                 if isinstance(exc, auth_exception.DefaultCredentialsError):
-                    raise InvalidAuthError(str(exc))
+                    raise InvalidAuthError(str(exc)) from exc
             except ImportError:
                 pass
-            message = "\nFatal exception occurred."
-            raise ComposerCliFatalError(message)
+            debug = kwargs.get("debug", False)
+            if debug:
+                raise
+            message = (
+                "\n致命的なエラーが発生しました。"
+                + constants.ADD_DEBUG_ON_ERROR_INFO
+            )
+            raise ComposerCliFatalError(message) from exc
 
     return wrapper
