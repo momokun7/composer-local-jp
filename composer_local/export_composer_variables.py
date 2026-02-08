@@ -29,8 +29,6 @@ from composer_local import composer_settings, constants
 from composer_local.secret_manager_sync import SecretManagerSync, export_variables_via_gcloud
 from composer_local.utils import require_gcp_secret_manager
 
-secretmanager, _DefaultCredentialsError = require_gcp_secret_manager()
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -83,6 +81,7 @@ def main():
             # Secret が存在しない場合は新規作成
             if "not found" in str(e).lower() or "does not exist" in str(e).lower():
                 print(f"{constants.ANSI_YELLOW}Secret が存在しないため、新規作成します{constants.ANSI_RESET}")
+                secretmanager, _DefaultCredentialsError = require_gcp_secret_manager()
                 client = secretmanager.SecretManagerServiceClient()
                 parent = f"projects/{args.project}"
                 name = f"{parent}/secrets/{args.secret_id}"

@@ -374,6 +374,16 @@ class Environment:
                     self.port,
                 )
             },
+            healthcheck={
+                "Test": [
+                    "CMD-SHELL",
+                    f"curl -f http://localhost:{self.port}/health || exit 1",
+                ],
+                "Interval": 10_000_000_000,
+                "Timeout": 5_000_000_000,
+                "Retries": 5,
+                "StartPeriod": 30_000_000_000,
+            },
             mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
             detach=True,
         )
@@ -391,8 +401,8 @@ class Environment:
             )
             try:
                 variables_json_path.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug(f"一時ファイル削除失敗: {e}")
 
     def _wait_for_db_ready(self, db, timeout_seconds: int = 60, interval_seconds: int = 2) -> None:
         """PostgreSQL コンテナが接続可能になるまで待機する。
@@ -448,9 +458,6 @@ class Environment:
             self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
             app.start()
         self._ensure_attached(net, app)
-
-        # 変数の自動インポート
-        self._auto_import_variables()
 
         return db, app
 
@@ -578,6 +585,8 @@ class Environment:
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
+        self._auto_import_variables()
+
         self._handle_first_time_init()
 
         print("Ctrl+C で停止します...")
@@ -592,8 +601,8 @@ class Environment:
             try:
                 app.stop()
                 db.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.warning(f"コンテナ停止中にエラー: {e}")
             print(f"{self.name} 環境が停止しました。")
 
         signal.signal(signal.SIGINT, lambda *_: (stop_containers(), sys.exit(0)))
@@ -646,12 +655,12 @@ class Environment:
             time.sleep(interval_seconds)
 
     def stop(self):
-        db = self._get_container(self.db_container_name, ignore_not_found=True)
-        if db:
-            db.stop()
         app = self._get_container(self.container_name, ignore_not_found=True)
         if app:
             app.stop()
+        db = self._get_container(self.db_container_name, ignore_not_found=True)
+        if db:
+            db.stop()
 
     def restart(self):
         self.stop()

@@ -1,6 +1,6 @@
 [project]
 name = "composer-local-jp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Google Cloud Composer local development tool (Japanese optimized, derived from GoogleCloudPlatform/composer-local-dev)"
 authors = [{ name = "Hirohiko Nakui" }]
 readme = "README.md"
@@ -62,6 +62,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = ["black>=24.10.0", "isort>=5.13.2", "pyproject-flake8>=6.1.0"]
+
+[tool.hatch.version]
+path = "composer_local/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["composer_local"]

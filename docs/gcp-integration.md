@@ -4,6 +4,14 @@
 
 > **Note**: GCP 連携はオプションです。ローカルで DAG を開発・テストするだけであれば、GCP の設定は不要です。
 
+## GCP 連携が必要なケース
+
+以下のようなユースケースで GCP 連携が役立ちます：
+
+- **本番の Airflow Variables をローカルで使いたい場合**: 本番環境の Variables、接続設定、認証情報などをローカル環境に同期して、本番同等の環境でテストできます。
+- **本番同等の接続設定をテストしたい場合**: Cloud SQL、BigQuery、GCS などのリソースへの接続設定を本番同等の状態でテストし、DAG の動作を確認できます。
+- **Secret Manager で集中管理されたシークレットを使いたい場合**: 環境間でシークレット管理を統一し、セキュアな設定情報を同期できます。
+
 ## 前提条件
 
 - [Google Cloud SDK (gcloud)](https://cloud.google.com/sdk/docs/install) がインストールされていること
@@ -78,7 +86,11 @@ Cloud Composer → Secret Manager → ローカル環境の順に同期します
 
 ```bash
 make sync-vars-sm
+# または設定ファイルなしで実行（SECRET_ID を指定）
+make sync-vars-sm SECRET_ID=your-secret-id
 ```
+
+Secret Manager のシークレット ID は `composer_settings.py` で設定するか、上記のようにコマンドラインで直接指定できます。
 
 ## 設定の同期
 

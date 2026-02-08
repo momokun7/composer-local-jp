@@ -12,8 +12,9 @@ class ComposerCliError(click.ClickException):
         super().__init__(msg)
 
 
-class ComposerCliFatalError(Exception):
-    pass
+class ComposerCliFatalError(click.ClickException):
+    def __init__(self, message):
+        super().__init__(message)
 
 
 class ImageNotFoundError(ComposerCliError):
@@ -28,7 +29,7 @@ class EnvironmentNotRunningError(ComposerCliError):
         super().__init__(msg)
 
 
-class EnvironmentNotFoundError(EnvironmentNotRunningError):
+class EnvironmentNotFoundError(ComposerCliError):
     pass
 
 
@@ -109,7 +110,7 @@ def catch_exceptions(func=None):
             if debug:
                 raise
             message = (
-                "\n致命的なエラーが発生しました。"
+                f"\n致命的なエラーが発生しました: {exc}"
                 + constants.ADD_DEBUG_ON_ERROR_INFO
             )
             raise ComposerCliFatalError(message) from exc
