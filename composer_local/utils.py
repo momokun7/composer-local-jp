@@ -421,3 +421,47 @@ def resolve_project_id(project_id: Optional[str]) -> str:
     if project_id is not None:
         return project_id
     return "local-dev"
+
+
+# ---------------------------------------------------------------------------
+# GCP パッケージの遅延インポートヘルパー
+# ---------------------------------------------------------------------------
+
+_GCP_INSTALL_HINT = (
+    "GCP 連携機能には追加パッケージが必要です。\n"
+    "  uv sync --extra gcp\n"
+    "を実行してください。"
+)
+
+
+def require_gcp_secret_manager():
+    """google-cloud-secret-manager パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        tuple: (secretmanager モジュール, DefaultCredentialsError 例外クラス)
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
+    try:
+        from google.auth.exceptions import DefaultCredentialsError
+        from google.cloud import secretmanager
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return secretmanager, DefaultCredentialsError
+
+
+def require_gcp_composer():
+    """google-cloud-orchestration-airflow パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        service_v1 モジュール
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
+    try:
+        from google.cloud.orchestration.airflow import service_v1
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return service_v1
