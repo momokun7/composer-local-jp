@@ -28,6 +28,7 @@ dev = [
     "black>=24.2.0,<25.0.0",
     "isort>=5.13.2,<6.0.0",
     "pyproject-flake8>=6.1.0,<7.0.0",
+    "pytest>=8.0.0,<9.0.0",
 ]
 
 [tool.black]
@@ -56,12 +57,15 @@ exclude = [
     "**/grpc_helpers.py",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["black>=24.10.0", "isort>=5.13.2", "pyproject-flake8>=6.1.0"]
+dev = ["black>=24.10.0", "isort>=5.13.2", "pyproject-flake8>=6.1.0", "pytest>=8.0.0"]
 
 [tool.hatch.version]
 path = "composer_local/version.py"

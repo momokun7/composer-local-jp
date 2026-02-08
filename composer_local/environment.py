@@ -377,7 +377,7 @@ class Environment:
             healthcheck={
                 "Test": [
                     "CMD-SHELL",
-                    f"curl -f http://localhost:{self.port}/health || exit 1",
+                    "curl -f http://localhost:8080/health || exit 1",
                 ],
                 "Interval": 10_000_000_000,
                 "Timeout": 5_000_000_000,
