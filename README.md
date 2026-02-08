@@ -27,10 +27,7 @@ cd composer-local-jp
 # 2. 依存関係のインストール
 make import
 
-# 3. ローカル環境の作成（初回のみ）
-make create
-
-# 4. 環境を起動（フォアグラウンドで実行）
+# 3. 起動（初回は環境作成 + セットアップも自動実行）
 make start
 
 # ブラウザでAirflow Web UIにアクセス
@@ -84,8 +81,7 @@ composer-local-jp/
 
 | コマンド | 説明 |
 |---------|------|
-| `make create` | ローカル環境の作成と初期セットアップ（初回のみ） |
-| `make start` | 環境の起動（フォアグラウンド実行、Ctrl+C で停止） |
+| `make start` | 環境を起動（未作成なら自動作成＋セットアップ、Ctrl+C で停止） |
 | `make stop` | 環境の停止 |
 | `make status` | 環境の状態確認 |
 | `make logs` | ログの表示 |

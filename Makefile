@@ -31,9 +31,10 @@ SERVICE_ACCOUNT ?= $(_CS_SA)
 # .PHONY 宣言
 # =============================================================================
 
-.PHONY: help import import-gcp create remove recreate start stop status logs \
+.PHONY: help import import-gcp start stop status logs \
+        remove recreate create \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
-        clean auth-user auth-sa wait-ready init-all
+        clean auth-user auth-sa
 
 # =============================================================================
 # ヘルパー関数
@@ -69,94 +70,39 @@ define check_env_exists
 		echo " 環境が存在しません！"; \
 		echo "=========================================="; \
 		echo ""; \
-		echo " 環境を作成してください:"; \
-		echo "   make create   - 環境を作成"; \
+		echo " 環境を作成・起動するには:"; \
+		echo "   make start"; \
 		echo "=========================================="; \
 		exit 1; \
 	fi
 endef
 
-# バナー付きエラーメッセージを表示して終了
-define fail_with_msg
-	(echo "" && echo "==========================================" && echo " $(1)" && echo "==========================================" && echo "" && exit 1)
-endef
-
-# 環境作成
-define create_env
-	@if ! uv run --active -- composer-local create \
-		$(if $(PROJECT),--project $(PROJECT)) \
-		--from-image-version $(IMAGE) \
-		--port $(PORT) \
-		--dags-path $(DAGS) \
-		--database $(DATABASE) \
-		$(ENV); then \
+# 環境が存在しない場合に自動作成
+define ensure_env_exists
+	@if [ ! -f "composer/$(ENV)/config.json" ]; then \
+		echo "\033[0;34m環境が存在しません。作成しています...\033[0m"; \
+		uv run --active -- composer-local create \
+			$(if $(PROJECT),--project $(PROJECT)) \
+			--from-image-version $(IMAGE) \
+			--port $(PORT) \
+			--dags-path $(DAGS) \
+			--database $(DATABASE) \
+			$(ENV) || exit 1; \
 		echo ""; \
-		echo "=========================================="; \
-		echo " 環境の作成に失敗しました！"; \
-		echo "=========================================="; \
-		echo ""; \
-		echo " エラーの詳細を確認してください:"; \
-		echo "   make logs     - ログを表示"; \
-		echo "   make status   - 環境の状態を表示"; \
-		echo "=========================================="; \
-		exit 1; \
 	fi
-	@echo ""
-endef
-
-# セットアップ完了バナー
-define show_setup_complete
-	@echo ""
-	@echo "=========================================="
-	@echo " ローカル環境のセットアップが完了しました！"
-	@echo "=========================================="
-	@echo ""
-	@echo "\033[38;5;197m  ██████╗ ██████╗ ███╗   ███╗██████╗  ███████╗███████╗██████╗ \033[0m"
-	@echo "\033[38;5;163m ██╔════╝██╔═══██╗████╗ ████║██╔══██╗██╔════╝██╔════╝██╔══██╗\033[0m"
-	@echo "\033[38;5;164m ██║     ██║   ██║██╔████╔██║██████╔╝███████╗█████╗  ██████╔╝\033[0m"
-	@echo "\033[38;5;165m ██║     ██║   ██║██║╚██╔╝██║██╔═══╝ ╚════██║██╔══╝  ██╔══██╗\033[0m"
-	@echo "\033[38;5;201m ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║     ███████║███████╗██║  ██║\033[0m"
-	@echo "\033[38;5;200m  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝\033[0m"
-	@echo ""
-	@echo "\033[38;5;197m ██╗      ██████╗  ██████╗ █████╗ ██╗     \033[0m"
-	@echo "\033[38;5;163m ██║     ██╔═══██╗██╔════╝██╔══██╗██║     \033[0m"
-	@echo "\033[38;5;164m ██║     ██║   ██║██║     ███████║██║     \033[0m"
-	@echo "\033[38;5;165m ██║     ██║   ██║██║     ██╔══██║██║     \033[0m"
-	@echo "\033[38;5;201m ███████╗╚██████╔╝╚██████╗██║  ██║███████╗\033[0m"
-	@echo "\033[38;5;200m ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝\033[0m"
-	@echo ""
-	@echo "\033[38;5;197m      ██╗██████╗ \033[0m"
-	@echo "\033[38;5;163m      ██║██╔══██╗\033[0m"
-	@echo "\033[38;5;164m      ██║██████╔╝\033[0m"
-	@echo "\033[38;5;163m ██   ██║██╔═══╝ \033[0m"
-	@echo "\033[38;5;201m  ╚████╔╝██║     \033[0m"
-	@echo "\033[38;5;200m   ╚═══╝ ╚═╝     \033[0m"
-	@echo ""
-	@echo "\033[1;33m=========================================="
-	@echo "   次のステップ"
-	@echo "==========================================\033[0m"
-	@echo ""
-	@echo "\033[1;32m 1. 環境を起動:\033[0m"
-	@echo "    \033[1;36mmake start\033[0m"
-	@echo ""
-	@echo "\033[1;32m 2. Airflow Web UI にアクセス:\033[0m"
-	@echo "    \033[1;36m👉 http://localhost:$(PORT)\033[0m"
-	@echo ""
-	@echo "\033[1;33m==========================================\033[0m"
 endef
 
 # =============================================================================
-# ターゲット: 環境セットアップ
+# ターゲット: メインコマンド
 # =============================================================================
 
 help:
 	@echo "利用可能なターゲット:"
 	@echo ""
-	@echo "  【環境セットアップ（GCP 設定不要）】"
+	@echo "  【基本操作（GCP 設定不要）】"
 	@echo "  import            uv 環境にプロジェクトをインストール（uv sync）"
 	@echo "  import-gcp        GCP 連携パッケージを追加インストール（uv sync --extra gcp）"
-	@echo "  create            ローカル環境を作成し、初期セットアップを自動実行"
-	@echo "  start             $(ENV) を起動（フォアグラウンドで実行、Ctrl+Cで停止）"
+	@echo "  start             環境を起動（未作成なら自動作成、フォアグラウンド実行、Ctrl+Cで停止）"
 	@echo "  stop              $(ENV) を停止（環境は残す）"
 	@echo ""
 	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）】"
@@ -170,12 +116,11 @@ help:
 	@echo "  status            $(ENV) の設定とステータスを表示"
 	@echo "  logs              $(ENV) のログを表示（LINES=all または行数を指定）"
 	@echo "  remove            環境を削除"
-	@echo "  recreate          環境を削除して再作成"
+	@echo "  recreate          環境を削除して再作成・起動"
 	@echo ""
 	@echo "  【その他】"
 	@echo "  setup-connections Google Cloud のデフォルト接続を設定（要: 環境起動）"
 	@echo "  create-admin      Airflow Adminユーザーを作成（要: 環境起動、USERNAME/PASSWORD/EMAIL など指定可）"
-	@echo "  init-all          起動→接続設定→管理者作成を一括実行（PROJECT指定時はVariablesも同期）"
 	@echo "  clean             __pycache__ やビルド生成物を削除"
 	@echo ""
 	@echo "  【オプション引数】"
@@ -188,13 +133,12 @@ import:
 import-gcp:
 	@uv sync --extra gcp
 
-create:
-	$(call create_env)
-	@$(MAKE) init-all
-
 start:
-	$(call check_env_exists)
+	$(call ensure_env_exists)
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.start_foreground()"
+
+# 後方互換: make create は make start のエイリアス
+create: start
 
 stop:
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.stop()" \
@@ -214,7 +158,7 @@ remove:
 
 recreate:
 	@$(MAKE) remove
-	@$(MAKE) create
+	@$(MAKE) start
 
 status:
 	$(call check_env_exists)
@@ -224,33 +168,8 @@ logs:
 	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all)
 
 # =============================================================================
-# ターゲット: 初期化・同期
+# ターゲット: GCP 連携・同期
 # =============================================================================
-
-wait-ready:
-	@timeout=900; interval=5; \
-	while [ $$timeout -gt 0 ]; do \
-		if uv run --active -- composer-local describe $(ENV) | grep -q "状態: running"; then \
-			exit 0; \
-		fi; \
-		sleep $$interval; \
-		timeout=$$((timeout-interval)); \
-	done; \
-	echo "タイムアウト: Airflow が起動しませんでした"; exit 1
-
-init-all:
-	@uv run --active -- python -c "from composer_local import files, environment as env; p=files.resolve_environment_path('$(ENV)'); e=env.Environment.load_from_config(p, None); e.start()" \
-		|| $(call fail_with_msg,環境の起動に失敗しました！)
-	@$(MAKE) wait-ready        || $(call fail_with_msg,環境の起動待機がタイムアウトしました！)
-	@if [ -n "$(PROJECT)" ] && [ -n "$(LOCATION)" ] && [ -n "$(ENV_NAME)" ]; then \
-		$(MAKE) sync-vars      || $(call fail_with_msg,Variables の同期に失敗しました！); \
-	else \
-		echo "GCP 設定（PROJECT/LOCATION/ENV_NAME）が未指定のため Variables 同期をスキップします"; \
-	fi
-	@$(MAKE) setup-connections || $(call fail_with_msg,接続のセットアップに失敗しました！)
-	@$(MAKE) create-admin      || $(call fail_with_msg,管理者ユーザーの作成に失敗しました！)
-	@$(MAKE) stop
-	$(call show_setup_complete)
 
 sync-vars:
 	$(call check_gcp_settings)

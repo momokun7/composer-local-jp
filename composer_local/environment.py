@@ -405,6 +405,88 @@ class Environment:
 
         print(f"{self.name} 環境を起動しました。")
 
+    def _first_time_init(self):
+        """初回起動時の自動セットアップ（接続設定 + 管理者ユーザー作成）"""
+        print(f"{constants.ANSI_BLUE}初回セットアップを実行しています...{constants.ANSI_RESET}")
+
+        # Google Cloud 接続を設定
+        try:
+            self.run_airflow_command([
+                "connections", "add", "google_cloud_default",
+                "--conn-type", "google_cloud_platform",
+                "--conn-extra", json.dumps({
+                    "extra__google_cloud_platform__key_path": None,
+                    "extra__google_cloud_platform__keyfile_dict": None,
+                    "extra__google_cloud_platform__scope":
+                        "https://www.googleapis.com/auth/cloud-platform",
+                }),
+            ])
+        except Exception:
+            pass
+
+        # Admin ユーザーを作成
+        try:
+            self.run_airflow_command([
+                "users", "create",
+                "--role", "Admin",
+                "--username", composer_settings.ADMIN_USERNAME,
+                "--password", composer_settings.ADMIN_PASSWORD,
+                "--email", composer_settings.ADMIN_EMAIL,
+                "--firstname", composer_settings.ADMIN_FIRSTNAME,
+                "--lastname", composer_settings.ADMIN_LASTNAME,
+            ])
+        except Exception:
+            pass
+
+        # マーカーファイルを作成
+        (self.env_dir_path / ".initialized").touch()
+
+    def _show_setup_banner(self):
+        """初回セットアップ完了バナーを表示"""
+        P = "\033[38;5;197m"
+        P2 = "\033[38;5;163m"
+        P3 = "\033[38;5;164m"
+        P4 = "\033[38;5;165m"
+        P5 = "\033[38;5;201m"
+        P6 = "\033[38;5;200m"
+        Y = "\033[1;33m"
+        G = "\033[1;32m"
+        C = "\033[1;36m"
+        R = "\033[0m"
+
+        print()
+        print(f"{Y}=========================================={R}")
+        print(f"{Y}   セットアップが完了しました！{R}")
+        print(f"{Y}=========================================={R}")
+        print()
+        print(f"{P}  ██████╗ ██████╗ ███╗   ███╗██████╗  ███████╗███████╗██████╗ {R}")
+        print(f"{P2} ██╔════╝██╔═══██╗████╗ ████║██╔══██╗██╔════╝██╔════╝██╔══██╗{R}")
+        print(f"{P3} ██║     ██║   ██║██╔████╔██║██████╔╝███████╗█████╗  ██████╔╝{R}")
+        print(f"{P4} ██║     ██║   ██║██║╚██╔╝██║██╔═══╝ ╚════██║██╔══╝  ██╔══██╗{R}")
+        print(f"{P5} ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║     ███████║███████╗██║  ██║{R}")
+        print(f"{P6}  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝{R}")
+        print()
+        print(f"{P}  ██╗      ██████╗  ██████╗ █████╗ ██╗     {R}")
+        print(f"{P2} ██║     ██╔═══██╗██╔════╝██╔══██╗██║     {R}")
+        print(f"{P3} ██║     ██║   ██║██║     ███████║██║     {R}")
+        print(f"{P4} ██║     ██║   ██║██║     ██╔══██║██║     {R}")
+        print(f"{P5} ███████╗╚██████╔╝╚██████╗██║  ██║███████╗{R}")
+        print(f"{P6} ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝{R}")
+        print()
+        print(f"{P}       ██╗██████╗ {R}")
+        print(f"{P2}      ██║██╔══██╗{R}")
+        print(f"{P3}      ██║██████╔╝{R}")
+        print(f"{P2} ██   ██║██╔═══╝ {R}")
+        print(f"{P5}  ╚████╔╝██║     {R}")
+        print(f"{P6}   ╚═══╝ ╚═╝     {R}")
+        print()
+        print(f"{G} Airflow Web UI:{R}  {C}http://localhost:{self.port}{R}")
+        print(f"{G} ユーザー名:{R}      {C}admin{R}")
+        print(f"{G} パスワード:{R}      {C}admin{R}")
+        print()
+        print(f"{Y}=========================================={R}")
+        print()
+
     def start_foreground(self):
         """Start the environment in foreground mode, attaching to container logs."""
         import atexit
@@ -434,7 +516,14 @@ class Environment:
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
-        print(f"{self.name} 環境を起動しました。")
+        # 初回セットアップ（マーカーファイルがない場合）
+        initialized_marker = self.env_dir_path / ".initialized"
+        if not initialized_marker.exists():
+            self._first_time_init()
+            self._show_setup_banner()
+        else:
+            print(f"{self.name} 環境を起動しました。")
+
         print(f"Airflow Web UI: http://localhost:{self.port}")
         print("Ctrl+C で停止します...")
 

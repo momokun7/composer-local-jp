@@ -26,7 +26,9 @@ init_airflow() {
     cached_hash=$(cat /tmp/.composer_req_hash)
   fi
   if [ "$req_hash" != "$cached_hash" ]; then
-    $run_as_user uv pip install --system -r composer_requirements.txt
+    # Docker イメージ内の site-packages に書き込み不可のファイルがあるため権限を修正
+    sudo chmod -R u+w /opt/python3.11/lib/python3.11/site-packages/airflow/ 2>/dev/null || true
+    sudo uv pip install --system -r composer_requirements.txt
     echo "$req_hash" > /tmp/.composer_req_hash
   fi
 
