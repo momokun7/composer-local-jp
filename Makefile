@@ -1,9 +1,3 @@
-# =============================================================================
-# 設定読み込み
-# =============================================================================
-
-# composer_settings.py の値を1回の Python 実行で読み込む
-# __init__.py の重い import chain をバイパスして直接読み込み（~0.03s）
 _DUMMY := $(shell uv run --active --quiet -- python scripts/load_make_settings.py > .make-settings.mk 2>/dev/null || true)
 -include .make-settings.mk
 .make-settings.mk:;
@@ -27,60 +21,38 @@ ENV_NAME        ?= $(_CS_ENV_NAME)
 SECRET_ID       ?= $(_CS_SECRET_ID)
 SERVICE_ACCOUNT ?= $(_CS_SA)
 
-# Docker コンテナ名プレフィックス（constants.py の CONTAINER_NAME と一致させる）
 CONTAINER_NAME  ?= composer-local-dev
-
-# =============================================================================
-# .PHONY 宣言
-# =============================================================================
 
 .PHONY: help import import-gcp start stop status logs \
         remove recreate \
         sync-vars sync-vars-sm setup-connections create-admin sync-settings \
         clean auth-user auth-sa
 
-# =============================================================================
-# ヘルパー関数
-# =============================================================================
-
-# GCP 設定の確認（sync-vars 等の GCP 連携ターゲット用）
 define check_gcp_settings
 	@if [ -z "$(PROJECT)" ] || [ -z "$(LOCATION)" ] || [ -z "$(ENV_NAME)" ]; then \
 		echo ""; \
-		echo "=========================================="; \
-		echo " GCP 設定が不足しています！"; \
-		echo "=========================================="; \
+		echo "GCP 設定が不足しています。以下のいずれかの方法で設定してください:"; \
 		echo ""; \
-		echo " 以下のいずれかの方法で設定してください:"; \
+		echo "  方法1: コマンドラインで指定"; \
+		echo "    make $(MAKECMDGOALS) PROJECT=xxx LOCATION=xxx ENV_NAME=xxx"; \
 		echo ""; \
-		echo " 方法1: コマンドラインで指定"; \
-		echo "   make $(MAKECMDGOALS) PROJECT=xxx LOCATION=xxx ENV_NAME=xxx"; \
+		echo "  方法2: composer_settings.py で設定"; \
+		echo "    cp composer_local/composer_settings.py.example composer_local/composer_settings.py"; \
 		echo ""; \
-		echo " 方法2: 設定ファイルを作成"; \
-		echo "   cp composer_local/composer_settings.py.example \\"; \
-		echo "      composer_local/composer_settings.py"; \
-		echo "   # 編集して PROJECT_ID 等を設定"; \
-		echo "=========================================="; \
 		exit 1; \
 	fi
 endef
 
-# 環境の存在を確認（config.json の有無で判定、CLI を経由しないため高速）
 define check_env_exists
 	@if [ ! -f "composer/$(ENV)/config.json" ]; then \
 		echo ""; \
-		echo "=========================================="; \
-		echo " 環境が存在しません！"; \
-		echo "=========================================="; \
+		echo "環境がまだ作成されていません。以下のコマンドで作成・起動できます:"; \
+		echo "  make start"; \
 		echo ""; \
-		echo " 環境を作成・起動するには:"; \
-		echo "   make start"; \
-		echo "=========================================="; \
 		exit 1; \
 	fi
 endef
 
-# 環境が存在しない場合に自動作成
 define ensure_env_exists
 	@if [ ! -f "composer/$(ENV)/config.json" ]; then \
 		echo "\033[0;34m環境が存在しません。作成しています...\033[0m"; \
@@ -95,55 +67,43 @@ define ensure_env_exists
 	fi
 endef
 
-# 環境が起動していることを確認（Docker コンテナの実行状態で判定）
 define check_env_running
 	@docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$(CONTAINER_NAME)-$(ENV)" || \
 		(echo "" && \
-		 echo "エラー: 環境が起動していません。" && \
-		 echo "" && \
-		 echo "以下のコマンドで起動してください:" && \
+		 echo "環境が起動していません。以下のコマンドで起動してください:" && \
 		 echo "  make start" && \
 		 echo "" && \
 		 exit 1)
 endef
 
-# =============================================================================
-# ターゲット: メインコマンド
-# =============================================================================
-
 help:
-	@echo "利用可能なターゲット:"
+	@echo "利用可能なコマンド:"
 	@echo ""
-	@echo "  【基本操作（GCP 設定不要）】"
-	@echo "  import            uv 環境にプロジェクトをインストール"
+	@echo "  【基本操作】"
+	@echo "  import            依存関係をインストール（初回のみ）"
 	@echo "  import-gcp        GCP 連携パッケージを追加インストール"
-	@echo "  start             環境を起動（初回は自動作成）"
-	@echo "  stop              $(ENV) を停止（環境は残す）"
+	@echo "  start             環境を起動（初回は自動作成します）"
+	@echo "  stop              環境を停止（コンテナは保持されます）"
+	@echo ""
+	@echo "  【環境管理】"
+	@echo "  status            環境の設定とステータスを表示"
+	@echo "  logs              ログを表示（例: make logs LINES=50）"
+	@echo "  remove            環境を削除"
+	@echo "  recreate          環境を削除して再作成・起動"
+	@echo "  clean             キャッシュやビルド生成物を削除"
 	@echo ""
 	@echo "  【GCP 連携（要: PROJECT, LOCATION, ENV_NAME）】"
 	@echo "  auth-user         GCP ユーザー認証（個人アカウント）"
-	@echo "  auth-sa           GCP サービスアカウント認証（staging環境と同等の権限）"
-	@echo "  sync-vars         staging Composer → ローカル Composer へVariablesを直接同期"
-	@echo "  sync-vars-sm      staging Composer → Secret Manager → ローカル Composer へVariablesを同期"
-	@echo "  sync-settings     Cloud Composer の設定を composer_settings.py に同期"
-	@echo ""
-	@echo "  【環境管理】"
-	@echo "  status            $(ENV) の設定とステータスを表示"
-	@echo "  logs              $(ENV) のログを表示（LINES=all または行数を指定）"
-	@echo "  remove            環境を削除"
-	@echo "  recreate          環境を削除して再作成・起動"
+	@echo "  auth-sa           GCP サービスアカウント認証"
+	@echo "  sync-vars         Cloud Composer → ローカルへ Variables を同期"
+	@echo "  sync-vars-sm      Secret Manager 経由で Variables を同期"
+	@echo "  sync-settings     Cloud Composer の設定を同期"
 	@echo ""
 	@echo "  【メンテナンス】"
-	@echo "  setup-connections Google Cloud のデフォルト接続を設定（要: 環境起動）"
-	@echo "  create-admin      Airflow Adminユーザーを作成（要: 環境起動）"
-	@echo "  clean             __pycache__ やビルド生成物を削除"
+	@echo "  setup-connections  Google Cloud のデフォルト接続を設定"
+	@echo "  create-admin       Airflow Admin ユーザーを作成"
 	@echo ""
-	@echo "  【オプション引数】"
-	@echo "  GCP 設定は composer_settings.py またはコマンドラインで指定:"
-	@echo "    make sync-vars PROJECT=xxx LOCATION=xxx ENV_NAME=xxx"
-	@echo ""
-	@echo "  【クイックスタート】"
-	@echo "  make import && make start    初回セットアップ"
+	@echo "  クイックスタート: make import && make start"
 
 import:
 	@uv sync
@@ -158,10 +118,6 @@ start:
 stop:
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.stop()" \
 		|| (echo "停止に失敗しました。" && exit 1)
-
-# =============================================================================
-# ターゲット: 環境管理
-# =============================================================================
 
 remove:
 	$(call check_env_exists)
@@ -182,10 +138,6 @@ status:
 logs:
 	$(call check_env_running)
 	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all)
-
-# =============================================================================
-# ターゲット: GCP 連携・同期
-# =============================================================================
 
 sync-vars:
 	$(call check_gcp_settings)
@@ -236,10 +188,6 @@ sync-settings:
 		--env $(ENV_NAME) \
 		|| (echo "設定の同期に失敗しました。" && exit 1)
 
-# =============================================================================
-# ターゲット: 認証
-# =============================================================================
-
 auth-user:
 	@gcloud auth login $(if $(PROJECT),--project $(PROJECT)) \
 		|| (echo "ユーザー認証に失敗しました。" && exit 1)
@@ -249,13 +197,9 @@ auth-user:
 auth-sa:
 	@if [ -z "$(SERVICE_ACCOUNT)" ]; then \
 		echo ""; \
-		echo "=========================================="; \
-		echo " SERVICE_ACCOUNT が未指定です！"; \
-		echo "=========================================="; \
+		echo "SERVICE_ACCOUNT の指定が必要です。使用例:"; \
+		echo "  make auth-sa SERVICE_ACCOUNT=xxx@yyy.iam.gserviceaccount.com"; \
 		echo ""; \
-		echo " 使用方法:"; \
-		echo "   make auth-sa SERVICE_ACCOUNT=xxx@yyy.iam.gserviceaccount.com"; \
-		echo "=========================================="; \
 		exit 1; \
 	fi
 	@gcloud auth login $(if $(PROJECT),--project $(PROJECT)) \
@@ -264,10 +208,6 @@ auth-sa:
 		--impersonate-service-account=$(SERVICE_ACCOUNT) \
 		|| (echo "サービスアカウント認証に失敗しました。" && exit 1)
 	@echo "Composerのサービスアカウントによる認証が完了しました。"
-
-# =============================================================================
-# ターゲット: クリーンアップ
-# =============================================================================
 
 clean:
 	@find . -name "__pycache__" -type d -prune -exec rm -rf {} + || true

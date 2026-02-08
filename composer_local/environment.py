@@ -38,10 +38,6 @@ class EnvironmentConfig:
         self.location = self._get_str("composer_location")
         self.dags_path = self._get_str("dags_path")
         self.dag_dir_list_interval = self._get_int("dag_dir_list_interval", (0,))
-        # ポート番号の解決順序（Environment.__init__ と統一）:
-        # 1. CLI引数で明示的に指定された場合はそれを使う
-        # 2. config.json に port がある場合はそれを使う
-        # 3. どちらもない場合は composer_settings.LOCAL_PORT をデフォルトとして使う
         self.port = self._resolve_port(port)
         self.database_engine = self._get_str("database_engine")
 
@@ -111,8 +107,6 @@ class Environment:
         self.dags_path = files.resolve_dags_path(dags_path, env_dir_path)
         self.dag_dir_list_interval = dag_dir_list_interval
         self.database_engine = database_engine
-        # ポート番号の解決（EnvironmentConfig._resolve_port と統一）:
-        # 明示的に指定されていれば使い、なければ composer_settings.LOCAL_PORT をデフォルトとする
         self.port: int = port if port is not None else composer_settings.LOCAL_PORT
         self.pypi_packages = pypi_packages or {}
         self.environment_vars = environment_vars or {}
@@ -153,11 +147,8 @@ class Environment:
         (self.env_dir_path / "config.json").write_text(json.dumps(cfg, indent=4))
 
     def _write_requirements(self):
-        # Include boto3 and other essential packages for DAGs
         essential_packages = {
-            "boto3": ">=1.35.16,<2.0.0",
-            "apache-airflow-providers-amazon": ">=8.28.0,<9.0.0",
-            "apache-airflow-providers-google": "==14.0.0",
+            "apache-airflow-providers-google": "",
         }
         all_packages = {**essential_packages, **self.pypi_packages}
         reqs = "\n".join(sorted(f"{k}{v}" for k, v in all_packages.items()))
@@ -221,7 +212,6 @@ class Environment:
             database_engine=database_engine,
         )
 
-    # -------- runtime helpers --------
     def _network(self, create: bool = True):
         try:
             return self.docker_client.networks.get(self.docker_network_name)
@@ -251,16 +241,11 @@ class Environment:
     def _mounts(self, include_db: bool):
         """Create Docker volume mounts for the Airflow container."""
         m = {
-            # Mount DAGs directory
             pathlib.Path(self.dags_path): "gcs/dags/",
-            # Mount plugins directory
             self.env_dir_path / "plugins": "gcs/plugins/",
-            # Mount data directory
             self.env_dir_path / "data": "gcs/data/",
-            # Mount requirements file
             self.env_dir_path / "requirements.txt": "composer_requirements.txt",
         }
-        # Mount gcloud config for authentication (optional)
         try:
             gcloud_path = pathlib.Path(utils.resolve_gcloud_config_path())
             if gcloud_path.is_dir():
@@ -296,37 +281,30 @@ class Environment:
     def _default_airflow_env(self) -> Dict[str, str]:
         """Return default Airflow environment variables for local development."""
         return {
-            # Core Airflow settings
             "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
             "AIRFLOW__CORE__DAGS_FOLDER": "/home/airflow/gcs/dags",
             "AIRFLOW__CORE__DATA_FOLDER": "/home/airflow/gcs/data",
             "AIRFLOW__CORE__LOAD_EXAMPLES": "false",
             "AIRFLOW__CORE__PLUGINS_FOLDER": "/home/airflow/gcs/plugins",
             "AIRFLOW_HOME": "/home/airflow/airflow",
-            # Logging settings
             "AIRFLOW__LOGGING__LOGGING_LEVEL": "INFO",
             "AIRFLOW__LOGGING__FAB_LOGGING_LEVEL": "WARN",
-            # Suppress cryptography warnings
             "PYTHONWARNINGS": "ignore::Warning",
-            # Scheduler settings
             "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(self.dag_dir_list_interval),
             "AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR": str(
                 self.image_version.startswith("composer-3")
             ),
-            # Webserver settings
             "AIRFLOW__WEBSERVER__EXPOSE_CONFIG": "true",
             "AIRFLOW__WEBSERVER__RELOAD_ON_PLUGIN_CHANGE": "True",
             "AIRFLOW__WEBSERVER__WEB_SERVER_NAME": "Airflow [LOCAL]",
             "AIRFLOW__WEBSERVER__BASE_URL": f"http://localhost:{self.port}",
             "AIRFLOW__WEBSERVER__NAVBAR_COLOR": "#e4007f",
             "AIRFLOW__WEBSERVER__SHOW_TRIGGER_FORM_IF_NO_PARAMS": "True",
-            # Database connection
             "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": (
                 f"postgresql+psycopg2://{composer_settings.POSTGRES_USER}:"
                 f"{composer_settings.POSTGRES_PASSWORD}@{self.db_container_name}:"
                 f"{composer_settings.POSTGRES_PORT}/{composer_settings.POSTGRES_DB}"
             ),
-            # Composer settings
             "COMPOSER_IMAGE_VERSION": self.image_version,
             "COMPOSER_PYTHON_VERSION": composer_settings.COMPOSER_PYTHON_VERSION,
             "COMPOSER_CONTAINER_RUN_AS_HOST_USER": "False",
@@ -355,7 +333,21 @@ class Environment:
             environment=self._db_env(),
             mounts=self._mounts(include_db=True),
             ports={
-                f"{composer_settings.POSTGRES_PORT}/tcp": str(composer_settings.POSTGRES_LOCAL_PORT)
+                f"{composer_settings.POSTGRES_PORT}/tcp": (
+                    "127.0.0.1" if composer_settings.BIND_TO_LOCALHOST_ONLY else "0.0.0.0",
+                    composer_settings.POSTGRES_LOCAL_PORT,
+                )
+            },
+            healthcheck={
+                "Test": [
+                    "CMD-SHELL",
+                    f"pg_isready -U {composer_settings.POSTGRES_USER} "
+                    f"-d {composer_settings.POSTGRES_DB}",
+                ],
+                "Interval": 5_000_000_000,   # 5 seconds in nanoseconds
+                "Timeout": 5_000_000_000,     # 5 seconds in nanoseconds
+                "Retries": 5,
+                "StartPeriod": 10_000_000_000,  # 10 seconds in nanoseconds
             },
             mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
             detach=True,
@@ -402,22 +394,39 @@ class Environment:
             except Exception:
                 pass
 
-    def _ensure_containers_running(self) -> Tuple:
-        """コンテナ起動の共通ロジック。
+    def _wait_for_db_ready(self, db, timeout_seconds: int = 60, interval_seconds: int = 2) -> None:
+        """PostgreSQL コンテナが接続可能になるまで待機する。
 
-        以下の処理を順に実行する:
-        1. オプションのバリデーション
-        2. DAGパスの存在確認
-        3. Dockerネットワークの作成
-        4. DBコンテナの取得/作成/起動
-        5. Appコンテナの取得/作成/起動
-        6. コンテナへのファイルコピー（entrypoint.sh, run_as_user.sh, webserver_config.py）
-        7. ネットワークへのアタッチ
-        8. 変数の自動インポート
-
-        Returns:
-            Tuple: (db, app) コンテナオブジェクトのタプル
+        Docker ヘルスチェックのステータスを確認し、healthy になるまでポーリングする。
+        ヘルスチェックが設定されていない場合は pg_isready コマンドで直接確認する。
         """
+        start_time = time.time()
+        print("PostgreSQL の起動を待機中", end="", flush=True)
+        while True:
+            db.reload()
+            health = db.attrs.get("State", {}).get("Health", {}).get("Status")
+            if health == "healthy":
+                print(" 起動完了")
+                return
+            # ヘルスチェック未設定の場合は exec で直接確認する
+            if health is None:
+                result = db.exec_run(
+                    ["pg_isready", "-U", composer_settings.POSTGRES_USER,
+                     "-d", composer_settings.POSTGRES_DB]
+                )
+                if result.exit_code == 0:
+                    print(" 起動完了")
+                    return
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_seconds:
+                print(" タイムアウト")
+                LOG.warning("PostgreSQL が指定時間内に起動しませんでした。")
+                return
+            print(".", end="", flush=True)
+            time.sleep(interval_seconds)
+
+    def _ensure_containers_running(self) -> Tuple:
+        """DB・Appコンテナを起動し、(db, app) タプルを返す。"""
         self._assert_options()
         files.assert_dag_path_exists(self.dags_path)
         net = self._network(create=True)
@@ -427,6 +436,9 @@ class Environment:
         if db.status != constants.ContainerStatus.RUNNING:
             db.start()
         self._ensure_attached(net, db)
+
+        # DBが接続可能になるまで待機
+        self._wait_for_db_ready(db)
 
         # Appコンテナの取得/作成/起動
         app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
@@ -443,12 +455,7 @@ class Environment:
         return db, app
 
     def _handle_first_time_init(self):
-        """初回セットアップ判定と実行。
-
-        .initialized マーカーファイルが存在しない場合に初回セットアップを実行し、
-        セットアップ完了バナーを表示する。
-        既に初期化済みの場合は起動メッセージと Web UI の URL を表示する。
-        """
+        """初回セットアップ判定と実行。未初期化なら初期化してバナー表示。"""
         initialized_marker = self.env_dir_path / ".initialized"
         if not initialized_marker.exists():
             self._first_time_init()
@@ -461,7 +468,6 @@ class Environment:
         """既存環境をバックグラウンドで起動（再起動用）。"""
         self._ensure_containers_running()
 
-        # Webサーバーが応答するまで待機
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
@@ -567,19 +573,21 @@ class Environment:
 
         db, app = self._ensure_containers_running()
 
-        # Webサーバーが応答するまで待機
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
-        # 初回セットアップ判定（マーカーファイルによる統一処理）
         self._handle_first_time_init()
 
         print("Ctrl+C で停止します...")
 
-        # シグナルハンドラでコンテナを確実に停止する
-        def signal_handler(signum, frame):
+        stopped = False
+        def stop_containers():
+            nonlocal stopped
+            if stopped:
+                return
+            stopped = True
             print(f"\n{self.name} 環境を停止しています...")
             try:
                 app.stop()
@@ -587,24 +595,13 @@ class Environment:
             except Exception:
                 pass
             print(f"{self.name} 環境が停止しました。")
-            sys.exit(0)
 
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGHUP, signal_handler)
-
-        # プロセス終了時にもコンテナを停止する
-        def cleanup_containers():
-            try:
-                app.stop()
-                db.stop()
-            except Exception:
-                pass
-
-        atexit.register(cleanup_containers)
+        signal.signal(signal.SIGINT, lambda *_: (stop_containers(), sys.exit(0)))
+        signal.signal(signal.SIGTERM, lambda *_: (stop_containers(), sys.exit(0)))
+        signal.signal(signal.SIGHUP, lambda *_: (stop_containers(), sys.exit(0)))
+        atexit.register(stop_containers)
 
         try:
-            # 現在時刻以降の ERROR/WARNING のみ表示（詳細は make logs で確認）
             now = int(time.time())
             for log_line in app.logs(stream=True, follow=True, since=now):
                 line = log_line.decode('utf-8').rstrip()
@@ -614,77 +611,39 @@ class Environment:
                 if any(p in line_upper for p in (' ERROR ', '[ERROR]', ' WARNING ', '[WARNING]')):
                     print(line)
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
-            # Ctrl+C、ターミナル切断、またはパイプ破損を処理
-            print(f"\n{self.name} 環境を停止しています...")
-            try:
-                app.stop()
-                db.stop()
-            except Exception:
-                pass
-            print(f"{self.name} 環境が停止しました。")
+            stop_containers()
 
     def resume_env(self):
-        """停止中の環境を再開する。
-
-        _ensure_containers_running() で停止中のコンテナを起動し、
-        Webサーバーの準備完了を待ってから初回セットアップ判定を行う。
-        start() との違い: 初回セットアップ判定を含む点。
-        start_foreground() との違い: フォアグラウンドログへのアタッチを行わない点。
-        """
+        """停止中の環境を再開する。"""
         self._ensure_containers_running()
 
-        # Webサーバーが応答するまで待機
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
-        # 初回セットアップ判定（マーカーファイルによる統一処理）
         self._handle_first_time_init()
 
     def _wait_until_webserver_ready(self, timeout_seconds: int, interval_seconds: int) -> None:
         url = f"http://localhost:{self.port}"
         start_time = time.time()
-
-        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[blue]Airflow Web サーバーを起動中..."),
-            TimeElapsedColumn(),
-            console=console.get_console(),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Web サーバーの起動を待機中", total=None)
-
-            while True:
-                try:
-                    with urllib.request.urlopen(url, timeout=5) as resp:
-                        status = resp.getcode()
-                        # 200 or 302 (redirect to /home) are both acceptable
-                        if status in (200, 302):
-                            progress.update(task, description="[green]Web サーバーが起動しました！")
-                            return
-                except (
-                    urllib.error.URLError,
-                    urllib.error.HTTPError,
-                    TimeoutError,
-                    ConnectionResetError,
-                    OSError,
-                ):
-                    pass
-
-                elapsed = time.time() - start_time
-                if elapsed >= timeout_seconds:
-                    progress.update(
-                        task, description="[red]タイムアウト内に Web サーバーが起動しませんでした"
-                    )
-                    console.get_console().print(
-                        "\n[red]指定したタイムアウト内に Web サーバーが起動しませんでした。\n"
-                        "ログを確認してから、もう一度お試しください。"
-                    )
-                    return
-                time.sleep(interval_seconds)
+        print(f"Airflow Web サーバーを起動中", end="", flush=True)
+        while True:
+            try:
+                with urllib.request.urlopen(url, timeout=5) as resp:
+                    if resp.getcode() in (200, 302):
+                        print(" 起動完了")
+                        return
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionResetError, OSError):
+                pass
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_seconds:
+                print(" タイムアウト")
+                print("指定したタイムアウト内に Web サーバーが起動しませんでした。")
+                print("ログを確認してから、もう一度お試しください。")
+                return
+            print(".", end="", flush=True)
+            time.sleep(interval_seconds)
 
     def stop(self):
         db = self._get_container(self.db_container_name, ignore_not_found=True)
@@ -693,7 +652,6 @@ class Environment:
         app = self._get_container(self.container_name, ignore_not_found=True)
         if app:
             app.stop()
-        # 停止メッセージは非表示
 
     def restart(self):
         self.stop()
@@ -721,11 +679,9 @@ class Environment:
         if quiet:
             return
 
-        # 不要なログメッセージをフィルタリング
         output = result.output.decode()
         filtered_lines = []
         for line in output.split('\n'):
-            # 定数で定義されたスキップ対象フレーズに該当する行を除外
             if any(phrase in line for phrase in constants.AIRFLOW_LOG_SKIP_PHRASES):
                 continue
             filtered_lines.append(line)
@@ -750,7 +706,6 @@ class Environment:
             auth_info = {"description": "ローカル専用モード（GCP 未設定）"}
             gcloud_path = ""
 
-        # 動的レイアウトを使用
         msg = utils.create_plain_status_text(
             name=self.name,
             state=env_status_colored,

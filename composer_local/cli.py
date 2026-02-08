@@ -167,12 +167,6 @@ def create(
             "環境の生成元が未指定です。--from-source-environment または --from-image-version を指定してください。"
         )
     project = utils.resolve_project_id(project)
-    # 本ツールでは production プロジェクトは対象外
-    if project and "production" in project.lower():
-        raise click.UsageError(
-            "ローカル Composer は本番プロジェクトを対象にできません: "
-            f"{project}。代わりにステージング プロジェクトを使用してください。"
-        )
     env_dir = pathlib.Path("composer", environment)
     if env_dir.is_dir():
         click.confirm(
@@ -403,16 +397,7 @@ def sync_vars(
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
 
-    # Force staging usage for local composer
     resolved_project = project or env.project_id or utils.get_project_id()
-    if resolved_project and "staging" not in resolved_project.lower():
-        raise click.UsageError(
-            "ローカル Composer はステージングのみに対応しています。"
-            f"解決されたプロジェクト '{resolved_project}' はステージングではありません。"
-        )
-    # Prefer environment config if it clearly indicates staging
-    if env.project_id and "staging" in env.project_id.lower():
-        resolved_project = env.project_id
     if not resolved_project:
         raise click.UsageError(
             "GCP プロジェクト ID を解決できませんでした。--project を指定してください。"
