@@ -42,8 +42,24 @@ ANSI_RED = "\033[0;31m"
 ANSI_GREEN = "\033[0;32m"
 ANSI_YELLOW = "\033[0;33m"
 ANSI_BLUE = "\033[0;34m"
+ANSI_CYAN = "\033[1;36m"
 ANSI_GRAY = "\033[90m"
 ANSI_RESET = "\033[0m"
+
+# Airflow コマンド実行時にフィルタリングするログメッセージ
+AIRFLOW_LOG_SKIP_PHRASES = [
+    "WARNING - empty cryptography key",
+    "Optional provider feature disabled",
+    "providers_manager.py",
+    "crypto.py",
+    "exec airflow variables import",
+    "variables successfully updated",
+    "Airflow Variables のインポートが完了しました",
+    "+ [ False = True ]",
+    "+ [",
+    "= True ]",
+    "= False ]",
+]
 
 AIRFLOW_HOME = "/home/airflow"
 ENTRYPOINT_PATH = f"{AIRFLOW_HOME}/entrypoint.sh"
