@@ -16,16 +16,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-try:
-    from google.cloud.orchestration.airflow import service_v1
-except ImportError as _err:
-    raise ImportError(
-        "GCP 連携機能には追加パッケージが必要です。\n"
-        "  uv sync --extra gcp\n"
-        "を実行してください。"
-    ) from _err
-
 from composer_local import errors
+from composer_local.utils import require_gcp_composer
+
+service_v1 = require_gcp_composer()
 
 LOG = logging.getLogger(__name__)
 

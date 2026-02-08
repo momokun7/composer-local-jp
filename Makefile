@@ -27,6 +27,9 @@ ENV_NAME        ?= $(_CS_ENV_NAME)
 SECRET_ID       ?= $(_CS_SECRET_ID)
 SERVICE_ACCOUNT ?= $(_CS_SA)
 
+# Docker コンテナ名プレフィックス（constants.py の CONTAINER_NAME と一致させる）
+CONTAINER_NAME  ?= composer-local-dev
+
 # =============================================================================
 # .PHONY 宣言
 # =============================================================================
@@ -90,6 +93,18 @@ define ensure_env_exists
 			$(ENV) || exit 1; \
 		echo ""; \
 	fi
+endef
+
+# 環境が起動していることを確認（Docker コンテナの実行状態で判定）
+define check_env_running
+	@docker ps --format '{{.Names}}' 2>/dev/null | grep -q "$(CONTAINER_NAME)-$(ENV)" || \
+		(echo "" && \
+		 echo "エラー: 環境が起動していません。" && \
+		 echo "" && \
+		 echo "以下のコマンドで起動してください:" && \
+		 echo "  make start" && \
+		 echo "" && \
+		 exit 1)
 endef
 
 # =============================================================================
@@ -165,6 +180,7 @@ status:
 	@uv run --active -- python -c "from composer_local import files, environment as env; e=env.Environment.load_from_config(files.resolve_environment_path('$(ENV)'), None); e.describe()"
 
 logs:
+	$(call check_env_running)
 	@uv run --active -- composer-local logs $(ENV) --max-lines $(or $(LINES),all)
 
 # =============================================================================
@@ -173,6 +189,7 @@ logs:
 
 sync-vars:
 	$(call check_gcp_settings)
+	$(call check_env_running)
 	@uv run --active -- python composer_local/sync_variables.py \
 		--project $(PROJECT) \
 		--location $(LOCATION) \
@@ -181,6 +198,7 @@ sync-vars:
 
 sync-vars-sm:
 	$(call check_gcp_settings)
+	$(call check_env_running)
 	@uv run --active -- python composer_local/export_composer_variables.py \
 		--project $(PROJECT) \
 		--location $(LOCATION) \
@@ -193,12 +211,14 @@ sync-vars-sm:
 		--airflow-url http://localhost:$(PORT) || exit 1
 
 setup-connections:
+	$(call check_env_running)
 	@uv run --active -- composer-local run-airflow $(ENV) connections add google_cloud_default \
 		--conn-type google_cloud_platform \
 		--conn-extra '{"extra__google_cloud_platform__key_path": null, "extra__google_cloud_platform__keyfile_dict": null, "extra__google_cloud_platform__scope": "https://www.googleapis.com/auth/cloud-platform"}' \
 		|| echo "接続 google_cloud_default は既に存在するか、作成に失敗しました"
 
 create-admin:
+	$(call check_env_running)
 	@uv run --active -- composer-local run-airflow $(ENV) users create \
 		--role Admin \
 		--username $(or $(USERNAME),$(ADMIN_USERNAME)) \

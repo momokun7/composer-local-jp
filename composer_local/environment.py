@@ -38,7 +38,11 @@ class EnvironmentConfig:
         self.location = self._get_str("composer_location")
         self.dags_path = self._get_str("dags_path")
         self.dag_dir_list_interval = self._get_int("dag_dir_list_interval", (0,))
-        self.port = port if port is not None else self._get_int("port", (0, 65536))
+        # ポート番号の解決順序（Environment.__init__ と統一）:
+        # 1. CLI引数で明示的に指定された場合はそれを使う
+        # 2. config.json に port がある場合はそれを使う
+        # 3. どちらもない場合は composer_settings.LOCAL_PORT をデフォルトとして使う
+        self.port = self._resolve_port(port)
         self.database_engine = self._get_str("database_engine")
 
     def _load(self) -> Dict:
@@ -67,6 +71,20 @@ class EnvironmentConfig:
             raise errors.FailedToParseConfigParamIntRangeError(name, value, allowed_range)
         return value
 
+    def _resolve_port(self, port: Optional[int]) -> int:
+        """ポート番号を解決する。
+
+        解決順序:
+        1. 引数 port が明示的に指定されていればそれを使う
+        2. config.json に "port" キーがあればそれを使う
+        3. どちらもなければ composer_settings.LOCAL_PORT をデフォルトとして使う
+        """
+        if port is not None:
+            return port
+        if "port" in self.config:
+            return self._get_int("port", (0, 65536))
+        return composer_settings.LOCAL_PORT
+
 
 class Environment:
     def __init__(
@@ -93,6 +111,8 @@ class Environment:
         self.dags_path = files.resolve_dags_path(dags_path, env_dir_path)
         self.dag_dir_list_interval = dag_dir_list_interval
         self.database_engine = database_engine
+        # ポート番号の解決（EnvironmentConfig._resolve_port と統一）:
+        # 明示的に指定されていれば使い、なければ composer_settings.LOCAL_PORT をデフォルトとする
         self.port: int = port if port is not None else composer_settings.LOCAL_PORT
         self.pypi_packages = pypi_packages or {}
         self.environment_vars = environment_vars or {}
@@ -424,7 +444,8 @@ class Environment:
                 }),
             ], quiet=True)
         except Exception:
-            pass
+            LOG.debug("Google Cloud 接続の設定に失敗しました", exc_info=True)
+            print("⚠ Google Cloud 接続の設定をスキップしました（GCP未設定の場合は正常です）")
 
         # Admin ユーザーを作成（AUTH_ROLE_PUBLIC のフォールバック用）
         try:
@@ -438,7 +459,8 @@ class Environment:
                 "--lastname", composer_settings.ADMIN_LASTNAME,
             ], quiet=True)
         except Exception:
-            pass
+            LOG.debug("Admin ユーザーの作成に失敗しました", exc_info=True)
+            print("⚠ Admin ユーザーの作成をスキップしました（既に存在する場合は正常です）")
 
         # マーカーファイルを作成
         (self.env_dir_path / ".initialized").touch()
