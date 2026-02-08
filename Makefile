@@ -107,6 +107,9 @@ help:
 	@echo ""
 	@echo "  クイックスタート: make import && make start"
 	@echo ""
+	@echo "  【現在の設定値】"
+	@echo "  ENV=$(ENV)  PORT=$(PORT)  IMAGE=$(IMAGE)  DATABASE=$(DATABASE)"
+	@echo ""
 	@echo "  【カスタマイズ例】"
 	@echo "  make start PORT=9090          ポートを変更して起動"
 	@echo "  make start ENV=staging        環境名を指定して起動"
@@ -130,11 +133,7 @@ stop:
 
 remove:
 	$(call check_env_exists)
-	@if [ -n "$(ENV)" ] && [ "$(ENV)" != "$(_CS_ENV)" ]; then \
-		uv run --active -- composer-local remove $(ENV) --force --skip-confirmation || (echo "環境 $(ENV) の削除に失敗しました。" && exit 1); \
-	else \
-		uv run --active -- composer-local remove --force --skip-confirmation || (echo "現在のローカル環境の削除に失敗しました。" && exit 1); \
-	fi
+	@uv run --active -- composer-local remove $(ENV) --force --skip-confirmation
 
 recreate:
 	@$(MAKE) remove

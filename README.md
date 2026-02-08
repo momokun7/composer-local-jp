@@ -131,6 +131,16 @@ make import-gcp
 - ファイルを更新すると再起動なしで自動反映されます（デフォルト 10 秒間隔）
 - DAG ディレクトリは `composer_settings.py` の `DAGS_PATH` で変更できます
 
+### サンプル DAG
+
+初期状態で `dags/print_hello_world.py` を用意しています。Airflow UI の DAGs 一覧で `hello_world_dag` が表示されることを確認してください。
+
+### DAG の追加と反映
+
+1. `dags/` ディレクトリに新しい `.py` ファイルを配置（ファイル名: `dag_id_*.py` など）
+2. Airflow UI にアクセスして、DAGs 一覧をリロード（F5 キー）
+3. ログで確認: `make logs LINES=50`（DAG パースエラーがないか確認）
+
 ---
 
 ## 設定ファイル

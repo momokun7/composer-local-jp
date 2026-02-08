@@ -195,142 +195,83 @@ def get_auth_info() -> Dict[str, str]:
         return {"type": "unknown", "account": "不明", "description": "認証情報の取得に失敗しました"}
 
 
+def _auth_result(
+    auth_info: Dict[str, str],
+    error_message: Optional[str] = None,
+    suggestions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """check_auth_validity の戻り値を組み立てるヘルパー"""
+    if error_message is None:
+        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
+    default_suggestions = [
+        "make auth-user を実行してユーザー認証を更新してください",
+        "make auth-sa を実行してサービスアカウント認証を更新してください",
+    ]
+    return {
+        "is_valid": False,
+        "auth_info": auth_info,
+        "error_message": error_message,
+        "suggestions": suggestions or default_suggestions,
+    }
+
+
+def _error_msg_for_returncode(returncode: int) -> str:
+    """returncode に応じた認証エラーメッセージを返す"""
+    if returncode == 1:
+        return "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
+    if returncode == 2:
+        return "gcloudコマンドの実行に失敗しました"
+    return f"認証の検証中にエラーが発生しました（終了コード: {returncode}）"
+
+
 def check_auth_validity() -> Dict[str, Any]:
-    """
-    現在の認証情報の有効性をチェックする
+    """現在の認証情報の有効性をチェックする。
 
     Returns:
-        Dict[str, Any]: 認証情報の状態と詳細情報
-        - is_valid: bool - 認証情報が有効かどうか
-        - auth_info: Dict[str, str] - 認証情報の詳細
-        - error_message: str - エラーメッセージ（無効な場合）
-        - suggestions: List[str] - 対処法の提案
+        Dict[str, Any]: ``is_valid``, ``auth_info``, ``error_message``,
+        ``suggestions`` をキーに持つ辞書。
     """
     auth_info = get_auth_info()
 
-    # 認証情報が取得できない場合
     if auth_info.get("type") == "unknown":
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": "認証情報が見つかりません",
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を行ってください",
-                "make auth-sa を実行してサービスアカウント認証を行ってください",
-            ],
-        }
+        return _auth_result(auth_info, "認証情報が見つかりません")
 
     try:
-        # 現在のプロジェクトを取得して認証の有効性をテスト
-        project_output = subprocess.run(
+        project = subprocess.run(
             [gcloud_cmd(), "config", "get-value", "project"],
-            check=True,
-            capture_output=True,
-            text=True,
+            check=True, capture_output=True, text=True,
         ).stdout.strip()
 
-        if not project_output:
-            return {
-                "is_valid": False,
-                "auth_info": auth_info,
-                "error_message": "プロジェクトが設定されていません",
-                "suggestions": [
-                    "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
-                    "make auth-user を実行して認証を行ってください",
-                ],
-            }
+        if not project:
+            return _auth_result(auth_info, "プロジェクトが設定されていません", [
+                "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
+                "make auth-user を実行して認証を行ってください",
+            ])
 
-        # 認証トークンの有効性をテスト（簡単なAPI呼び出し）
-        try:
-            subprocess.run(
-                [gcloud_cmd(), "auth", "print-access-token"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            # より詳細なエラーメッセージを生成
-            if e.returncode == 1:
-                error_msg = "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
-            elif e.returncode == 2:
-                error_msg = "gcloudコマンドの実行に失敗しました"
-            else:
-                error_msg = f"認証の検証中にエラーが発生しました（終了コード: {e.returncode}）"
+        subprocess.run(
+            [gcloud_cmd(), "auth", "print-access-token"],
+            check=True, capture_output=True, text=True,
+        )
 
-            return {
-                "is_valid": False,
-                "auth_info": auth_info,
-                "error_message": error_msg,
-                "suggestions": [
-                    "make auth-user を実行してユーザー認証を更新してください",
-                    "make auth-sa を実行してサービスアカウント認証を更新してください",
-                ],
-            }
-
-        # サービスアカウントの権限借用の場合、追加のチェック
         if auth_info.get("type") == "service_account":
-            try:
-                # サービスアカウントの権限をテスト
-                account_name = auth_info.get("account", "")
-                subprocess.run(
-                    [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy", account_name],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            except subprocess.CalledProcessError:
-                return {
-                    "is_valid": False,
-                    "auth_info": auth_info,
-                    "error_message": "サービスアカウントの権限が不足しています",
-                    "suggestions": [
-                        "make auth-sa を実行してサービスアカウント認証を更新してください",
-                        "サービスアカウントに必要な権限があることを確認してください",
-                    ],
-                }
+            subprocess.run(
+                [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy",
+                 auth_info.get("account", "")],
+                check=True, capture_output=True, text=True,
+            )
 
-        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
+        return _auth_result(auth_info)
 
     except subprocess.CalledProcessError as e:
-        # より具体的なエラーメッセージを生成
-        if "auth" in str(e.cmd) and e.returncode == 1:
-            error_msg = "gcloud認証コマンドの実行に失敗しました（認証情報が無効または期限切れ）"
-        elif "config" in str(e.cmd) and e.returncode == 1:
-            error_msg = (
-                "gcloud設定の取得に失敗しました（プロジェクトが設定されていない可能性があります）"
-            )
-        else:
-            error_msg = f"gcloudコマンドの実行に失敗しました（終了コード: {e.returncode}）"
-
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": error_msg,
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を更新してください",
-                "make auth-sa を実行してサービスアカウント認証を更新してください",
-            ],
-        }
+        return _auth_result(auth_info, _error_msg_for_returncode(e.returncode))
     except FileNotFoundError:
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": "gcloudコマンドが見つかりません（Google Cloud SDKがインストールされていない可能性があります）",
-            "suggestions": [
-                "Google Cloud SDKをインストールしてください",
-                "https://cloud.google.com/sdk/docs/install を参照してください",
-            ],
-        }
+        return _auth_result(auth_info,
+            "gcloudコマンドが見つかりません（Google Cloud SDKがインストールされていない可能性があります）",
+            ["Google Cloud SDKをインストールしてください",
+             "https://cloud.google.com/sdk/docs/install を参照してください"],
+        )
     except Exception as e:
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": f"予期しないエラーが発生しました: {str(e)}",
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を更新してください",
-                "make auth-sa を実行してサービスアカウント認証を更新してください",
-            ],
-        }
+        return _auth_result(auth_info, f"予期しないエラーが発生しました: {e}")
 
 
 def assert_environment_name_is_valid(env_name: str):
