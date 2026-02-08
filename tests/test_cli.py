@@ -133,8 +133,8 @@ class TestStopCommandHelp:
         assert "Usage" in result.output
 
     def test_help_contains_verbose_option(self):
-        """stop --help に --verbose オプションが表示されること."""
-        result = _invoke("stop", "--help")
+        """トップレベル --help に --verbose オプションが表示されること."""
+        result = _invoke("--help")
         assert "--verbose" in result.output
 
 
@@ -152,8 +152,8 @@ class TestDescribeCommandHelp:
         assert "Usage" in result.output
 
     def test_help_contains_debug_option(self):
-        """describe --help に --debug オプションが表示されること."""
-        result = _invoke("describe", "--help")
+        """トップレベル --help に --debug オプションが表示されること."""
+        result = _invoke("--help")
         assert "--debug" in result.output
 
 

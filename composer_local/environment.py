@@ -11,7 +11,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import docker
 from docker import errors as docker_errors
@@ -20,6 +20,13 @@ from composer_local import composer_settings, console, constants, errors, files,
 
 LOG = logging.getLogger(__name__)
 DOCKER_FILES = pathlib.Path(__file__).parent / "docker_files"
+
+# コンテナにコピーするファイル一覧
+CONTAINER_COPY_FILES: List[pathlib.Path] = [
+    DOCKER_FILES / "entrypoint.sh",
+    DOCKER_FILES / "run_as_user.sh",
+    DOCKER_FILES / "webserver_config.py",
+]
 
 
 class EnvironmentStatus:
@@ -96,6 +103,22 @@ class Environment:
         pypi_packages: Optional[Dict] = None,
         environment_vars: Optional[Dict] = None,
     ):
+        """Environment を初期化する。
+
+        Args:
+            env_dir_path: 環境ディレクトリのパス。
+            project_id: GCP プロジェクト ID。
+            image_version: Composer イメージバージョン文字列。
+            location: GCP リージョン。
+            dags_path: DAG ディレクトリのパス。
+            dag_dir_list_interval: DAG ディレクトリの再読み込み間隔（秒）。
+            database_engine: データベースエンジン種別。
+                ``constants.DatabaseEngine`` enum の値
+                (``"postgresql"`` または ``"sqlite3"``) を文字列で受け取る。
+            port: Airflow Web UI のポート番号。
+            pypi_packages: 追加でインストールする PyPI パッケージの辞書。
+            environment_vars: Airflow に渡す追加の環境変数の辞書。
+        """
         self.name = env_dir_path.name
         self.container_name = f"{constants.CONTAINER_NAME}-{self.name}"
         self.db_container_name = f"{constants.DB_CONTAINER_NAME}-{self.name}"
@@ -238,6 +261,54 @@ class Environment:
             tar.addfile(info, f)
         container.put_archive(constants.AIRFLOW_HOME, stream.getvalue())
 
+    def _copy_files_to_container(self, container) -> None:
+        """CONTAINER_COPY_FILES に定義されたファイルをコンテナへコピーする。"""
+        for src in CONTAINER_COPY_FILES:
+            self._copy_to_container(container, src)
+
+    def _warn_if_port_exposed(self, service_label: str) -> None:
+        """BIND_TO_LOCALHOST_ONLY が False の場合にセキュリティ警告をログ出力する。
+
+        Args:
+            service_label: 警告メッセージに含めるサービス名（例: "PostgreSQL ポート"）。
+        """
+        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
+            LOG.warning(
+                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
+                f" {service_label}が外部ネットワークに公開されます。"
+                " セキュリティリスクを理解した上で使用してください。"
+            )
+
+    def _poll_until_ready(
+        self,
+        check_fn: Callable[[], bool],
+        timeout_seconds: int,
+        interval_seconds: int,
+        label: str,
+        timeout_message: str,
+    ) -> None:
+        """check_fn が True を返すまでポーリングする汎用ヘルパー。
+
+        Args:
+            check_fn: 準備完了時に True を返すコールバック。
+            timeout_seconds: タイムアウトまでの秒数。
+            interval_seconds: ポーリング間隔（秒）。
+            label: 待機中に表示するラベル文字列。
+            timeout_message: タイムアウト時に ComposerCliError に渡すメッセージ。
+        """
+        start_time = time.time()
+        print(f"{label}", end="", flush=True)
+        while True:
+            if check_fn():
+                print(" 起動完了")
+                return
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_seconds:
+                print(" タイムアウト")
+                raise errors.ComposerCliError(timeout_message)
+            print(".", end="", flush=True)
+            time.sleep(interval_seconds)
+
     def _mounts(self, include_db: bool):
         """Create Docker volume mounts for the Airflow container."""
         m = {
@@ -329,12 +400,7 @@ class Environment:
             raise errors.EnvironmentNotFoundError()
 
     def _create_db(self):
-        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
-            LOG.warning(
-                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
-                " PostgreSQL ポートが外部ネットワークに公開されます。"
-                " セキュリティリスクを理解した上で使用してください。"
-            )
+        self._warn_if_port_exposed("PostgreSQL ポート")
         self.docker_client.images.pull(composer_settings.POSTGRES_IMAGE)
         return self.docker_client.containers.create(
             image=composer_settings.POSTGRES_IMAGE,
@@ -353,21 +419,24 @@ class Environment:
                     f"pg_isready -U {composer_settings.POSTGRES_USER} "
                     f"-d {composer_settings.POSTGRES_DB}",
                 ],
-                "Interval": 5_000_000_000,   # 5 seconds in nanoseconds
-                "Timeout": 5_000_000_000,     # 5 seconds in nanoseconds
-                "Retries": 5,
-                "StartPeriod": 10_000_000_000,  # 10 seconds in nanoseconds
+                "Interval": constants.HEALTHCHECK_INTERVAL_NS,
+                "Timeout": constants.HEALTHCHECK_TIMEOUT_NS,
+                "Retries": constants.HEALTHCHECK_RETRIES,
+                "StartPeriod": constants.HEALTHCHECK_START_PERIOD_DB_NS,
             },
             mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
             detach=True,
         )
 
     def _create_app(self):
+        self._warn_if_port_exposed("Airflow Web サーバーのポート")
         if not composer_settings.BIND_TO_LOCALHOST_ONLY:
+            # webserver_config.py で AUTH_ROLE_PUBLIC=Admin が設定されているため、
+            # ポート公開時は認証なしで管理者権限のアクセスが可能になる
             LOG.warning(
-                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
-                " Airflow Web サーバーのポートが外部ネットワークに公開されます。"
-                " セキュリティリスクを理解した上で使用してください。"
+                "AUTH_ROLE_PUBLIC が Admin に設定された状態でポートが外部に公開されます。"
+                " 認証なしで管理者権限のアクセスが可能です。"
+                " 信頼できないネットワークでの使用は避けてください。"
             )
         image_tag = self._image_tag()
         try:
@@ -402,17 +471,15 @@ class Environment:
                     "CMD-SHELL",
                     "curl -f http://localhost:8080/health || exit 1",
                 ],
-                "Interval": 10_000_000_000,
-                "Timeout": 5_000_000_000,
-                "Retries": 5,
-                "StartPeriod": 30_000_000_000,
+                "Interval": constants.HEALTHCHECK_INTERVAL_NS,
+                "Timeout": constants.HEALTHCHECK_TIMEOUT_NS,
+                "Retries": constants.HEALTHCHECK_RETRIES,
+                "StartPeriod": constants.HEALTHCHECK_START_PERIOD_APP_NS,
             },
             mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
             detach=True,
         )
-        self._copy_to_container(c, DOCKER_FILES / "entrypoint.sh")
-        self._copy_to_container(c, DOCKER_FILES / "run_as_user.sh")
-        self._copy_to_container(c, DOCKER_FILES / "webserver_config.py")
+        self._copy_files_to_container(c)
         return c
 
     def _auto_import_variables(self):
@@ -433,32 +500,31 @@ class Environment:
         Docker ヘルスチェックのステータスを確認し、healthy になるまでポーリングする。
         ヘルスチェックが設定されていない場合は pg_isready コマンドで直接確認する。
         """
-        start_time = time.time()
-        print("PostgreSQL の起動を待機中", end="", flush=True)
-        while True:
+
+        def _check_db() -> bool:
             db.reload()
             health = db.attrs.get("State", {}).get("Health", {}).get("Status")
             if health == "healthy":
-                print(" 起動完了")
-                return
+                return True
             # ヘルスチェック未設定の場合は exec で直接確認する
             if health is None:
                 result = db.exec_run(
                     ["pg_isready", "-U", composer_settings.POSTGRES_USER,
                      "-d", composer_settings.POSTGRES_DB]
                 )
-                if result.exit_code == 0:
-                    print(" 起動完了")
-                    return
-            elapsed = time.time() - start_time
-            if elapsed >= timeout_seconds:
-                print(" タイムアウト")
-                raise errors.ComposerCliError(
-                    f"PostgreSQL が {timeout_seconds} 秒以内に起動しませんでした。"
-                    " Docker のメモリ割り当てを確認してください（推奨: 4GB 以上）。"
-                )
-            print(".", end="", flush=True)
-            time.sleep(interval_seconds)
+                return result.exit_code == 0
+            return False
+
+        self._poll_until_ready(
+            check_fn=_check_db,
+            timeout_seconds=timeout_seconds,
+            interval_seconds=interval_seconds,
+            label="PostgreSQL の起動を待機中",
+            timeout_message=(
+                f"PostgreSQL が {timeout_seconds} 秒以内に起動しませんでした。"
+                " Docker のメモリ割り当てを確認してください（推奨: 4GB 以上）。"
+            ),
+        )
 
     def _ensure_containers_running(self) -> Tuple:
         """DB・Appコンテナを起動し、(db, app) タプルを返す。"""
@@ -478,9 +544,7 @@ class Environment:
         # Appコンテナの取得/作成/起動
         app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
         if app.status != constants.ContainerStatus.RUNNING:
-            self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
-            self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
-            self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
+            self._copy_files_to_container(app)
             app.start()
         self._ensure_attached(net, app)
 
@@ -629,8 +693,8 @@ class Environment:
             stopped = True
             print(f"\n{self.name} 環境を停止しています...")
             try:
-                app.stop()
-                db.stop()
+                app.stop(timeout=30)
+                db.stop(timeout=30)
             except Exception as e:
                 LOG.warning(f"コンテナ停止中にエラー: {e}")
             print(f"{self.name} 環境が停止しました。")
@@ -665,33 +729,32 @@ class Environment:
 
     def _wait_until_webserver_ready(self, timeout_seconds: int, interval_seconds: int) -> None:
         url = f"http://localhost:{self.port}"
-        start_time = time.time()
-        print(f"Airflow Web サーバーを起動中", end="", flush=True)
-        while True:
+
+        def _check_webserver() -> bool:
             try:
                 with urllib.request.urlopen(url, timeout=5) as resp:
-                    if resp.getcode() in (200, 302):
-                        print(" 起動完了")
-                        return
+                    return resp.getcode() in (200, 302)
             except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionResetError, OSError):
-                pass
-            elapsed = time.time() - start_time
-            if elapsed >= timeout_seconds:
-                print(" タイムアウト")
-                raise errors.ComposerCliError(
-                    f"Airflow Web サーバーが {timeout_seconds} 秒以内に起動しませんでした。"
-                    " ログを確認してから、もう一度お試しください。"
-                )
-            print(".", end="", flush=True)
-            time.sleep(interval_seconds)
+                return False
+
+        self._poll_until_ready(
+            check_fn=_check_webserver,
+            timeout_seconds=timeout_seconds,
+            interval_seconds=interval_seconds,
+            label="Airflow Web サーバーを起動中",
+            timeout_message=(
+                f"Airflow Web サーバーが {timeout_seconds} 秒以内に起動しませんでした。"
+                " ログを確認してから、もう一度お試しください。"
+            ),
+        )
 
     def stop(self):
         app = self._get_container(self.container_name, ignore_not_found=True)
         if app:
-            app.stop()
+            app.stop(timeout=30)
         db = self._get_container(self.db_container_name, ignore_not_found=True)
         if db:
-            db.stop()
+            db.stop(timeout=30)
 
     def restart(self):
         self.stop()
@@ -764,7 +827,7 @@ class Environment:
                 if c.status == constants.ContainerStatus.RUNNING:
                     if not force:
                         raise force_error
-                    c.stop()
+                    c.stop(timeout=30)
                 c.remove()
         net = self._network(create=False)
         if net:

@@ -59,6 +59,81 @@ make test
 - 環境変数または設定ファイル経由で読み込む
 - 詳細は `.claude/CLAUDE.md` を参照
 
+## テストの書き方
+
+このプロジェクトでは [pytest](https://docs.pytest.org/) を使用してテストを記述します。
+
+### 基本ルール
+
+- テストファイルは `tests/` ディレクトリ配下に配置してください
+- ファイル名は `test_*.py` の形式にしてください（例: `test_environment.py`）
+- テスト関数名は `test_` で始めてください（例: `def test_create_environment():`）
+- 新しい機能やバグ修正には、対応するテストを追加してください
+
+### テストの実行
+
+```bash
+# 全テストを実行
+make test
+
+# 特定のファイルだけ実行
+uv run pytest tests/test_environment.py -v
+
+# 特定のテスト関数だけ実行
+uv run pytest tests/test_environment.py::test_create_environment -v
+```
+
+### テストの例
+
+```python
+# tests/test_example.py
+from composer_local import utils
+
+
+def test_example_function():
+    """関数の動作を説明するドキュメント文字列"""
+    result = utils.some_function("input")
+    assert result == "expected_output"
+```
+
+## CHANGELOG の更新ルール
+
+ユーザーに影響のある変更を行った場合は、`CHANGELOG.md` を更新してください。
+
+### 更新が必要なケース
+
+- 新機能の追加（`feat`）
+- バグ修正（`fix`）
+- 破壊的変更
+- 依存関係の重要な更新
+
+### 更新が不要なケース
+
+- ドキュメントのみの変更（`docs`）
+- リファクタリング（`refactor`、動作変更なし）
+- テストの追加・修正（`test`）
+- コードスタイルの修正（`style`）
+
+### 記載形式
+
+`CHANGELOG.md` の `[Unreleased]` セクションに、以下の形式で追記してください:
+
+```markdown
+## [Unreleased]
+
+### Added（追加）
+- 新機能の説明
+
+### Fixed（修正）
+- バグ修正の説明
+
+### Changed（変更）
+- 既存機能の変更内容
+
+### Removed（削除）
+- 削除された機能
+```
+
 ## コミットメッセージ形式
 
 コミットメッセージは以下の形式で、日本語で記載してください:
