@@ -91,7 +91,11 @@ def main():
         variables = sync_client.get_all_variables()
 
         if not variables:
-            print(f"{constants.ANSI_YELLOW}Secret Manager に Variables が見つかりません{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_YELLOW}Secret Manager に Variables が"
+                f"見つかりません{constants.ANSI_RESET}"
+            )
+            print(msg)
             return
 
         # ローカルの既存Variablesを削除してインポート
@@ -123,7 +127,11 @@ def main():
         print(f"ローカルの Airflow Variables を更新しました ({len(variables)} 件)")
 
     except Exception as e:
-        print(f"{constants.ANSI_RED}Variables のインポートでエラーが発生しました: {e}{constants.ANSI_RESET}")
+        msg = (
+            f"{constants.ANSI_RED}Variables のインポートでエラーが発生しました: "
+            f"{e}{constants.ANSI_RESET}"
+        )
+        print(msg)
         raise
 
 

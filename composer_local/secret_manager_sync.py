@@ -145,7 +145,8 @@ def run_command(cmd: list[str]) -> str:
 
 
 def export_variables_via_gcloud(project: str, location: str, env_name: str) -> dict:
-    """Composer 内で `airflow variables export -- /dev/stdout` を実行し、JSON を直接取得（GCS不使用）。"""
+    """Composer 内で `airflow variables export -- /dev/stdout` を実行し、
+    JSON を直接取得（GCS不使用）。"""
     out = run_command(
         [
             "gcloud",
@@ -464,7 +465,13 @@ class SecretManagerSync:
 
                     # 並列でVariablesを削除
                     commands = {
-                        name: ["/home/airflow/run_as_user.sh", "airflow", "variables", "delete", name]
+                        name: [
+                            "/home/airflow/run_as_user.sh",
+                            "airflow",
+                            "variables",
+                            "delete",
+                            name,
+                        ]
                         for name in variable_names
                     }
                     run_parallel_container_commands(app, commands, "Variable削除")

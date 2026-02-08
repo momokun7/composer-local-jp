@@ -447,8 +447,8 @@ class Environment:
             error_msg = str(e).lower()
             if "unauthorized" in error_msg or "denied" in error_msg:
                 raise errors.ComposerCliError(
-                    f"Docker イメージの取得に認証エラーが発生しました。\n"
-                    f"対処: gcloud auth configure-docker us-docker.pkg.dev"
+                    "Docker イメージの取得に認証エラーが発生しました。\n"
+                    "対処: gcloud auth configure-docker us-docker.pkg.dev"
                 )
             raise errors.ComposerCliError(f"Docker イメージの取得に失敗しました: {e}")
         env_vars = {**self._default_airflow_env(), **(self.environment_vars or {})}
@@ -734,7 +734,13 @@ class Environment:
             try:
                 with urllib.request.urlopen(url, timeout=5) as resp:
                     return resp.getcode() in (200, 302)
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionResetError, OSError):
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                TimeoutError,
+                ConnectionResetError,
+                OSError,
+            ):
                 return False
 
         self._poll_until_ready(

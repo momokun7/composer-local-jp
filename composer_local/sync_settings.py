@@ -64,7 +64,8 @@ def write_composer_settings(
     content = (
         '"""\n'
         "このファイルは、ローカル環境の Composer 設定を管理します。\n"
-        "Cloud Composer の設定をこのファイルに同期することで、ローカル環境の Composer 設定を管理できます。\n\n"
+        "Cloud Composer の設定をこのファイルに同期することで、"
+        "ローカル環境の Composer 設定を管理できます。\n\n"
         "このファイルの設定は以下の場所で使用されます：\n"
         "- Makefile: 環境作成、認証、変数同期などのコマンド\n"
         "- CLI: composer-local コマンドのデフォルト値\n"

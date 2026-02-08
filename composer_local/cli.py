@@ -13,11 +13,9 @@ import shutil
 from typing import List, Optional, Union
 
 import click
-import rich.markdown
 
-from composer_local import composer_settings, console, constants
+from composer_local import composer_settings, console, constants, errors, files, utils, version
 from composer_local import environment as composer_environment
-from composer_local import errors, files, utils, version
 
 LOG = logging.getLogger(__name__)
 
@@ -171,7 +169,8 @@ def create(
     utils.assert_environment_name_is_valid(environment)
     if not from_source_environment and not from_image_version:
         raise click.UsageError(
-            "環境の生成元が未指定です。--from-source-environment または --from-image-version を指定してください。"
+            "環境の生成元が未指定です。"
+            "--from-source-environment または --from-image-version を指定してください。"
         )
     project = utils.resolve_project_id(project)
     env_dir = pathlib.Path("composer", environment)
@@ -309,7 +308,11 @@ def remove(
             # コンテナを強制削除する。
             import subprocess
             env_name = env_path.name
-            for name in [f"{constants.CONTAINER_NAME}-{env_name}", f"{constants.DB_CONTAINER_NAME}-{env_name}"]:
+            container_names = [
+                f"{constants.CONTAINER_NAME}-{env_name}",
+                f"{constants.DB_CONTAINER_NAME}-{env_name}",
+            ]
+            for name in container_names:
                 try:
                     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
                 except Exception:
@@ -331,23 +334,36 @@ def run_airflow_cmd(ctx, environment: Optional[str], command: List[str]):
     try:
         subcmd = command[0] if command else ""
         if subcmd == "users" and len(command) >= 2 and command[1] == "create":
-            print(f"{constants.ANSI_BLUE}Web UI 用の管理者ユーザーを作成しています...{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_BLUE}Web UI 用の管理者ユーザーを"
+                f"作成しています...{constants.ANSI_RESET}"
+            )
+            print(msg)
         elif (
             subcmd == "connections"
             and len(command) >= 4
             and command[1] == "add"
             and command[2] == "google_cloud_default"
         ):
-            print(f"{constants.ANSI_BLUE}Google Cloud 接続を設定しています...{constants.ANSI_RESET}")
+            msg = f"{constants.ANSI_BLUE}Google Cloud 接続を設定しています...{constants.ANSI_RESET}"
+            print(msg)
         elif verbose:
             cmd_str = ' '.join(command)
-            print(f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: {cmd_str}{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
+                f"{cmd_str}{constants.ANSI_RESET}"
+            )
+            print(msg)
     except Exception as e:
         LOG.debug(f"出力表示エラー: {e}")
         # Fallback to verbose banner only
         if verbose:
             cmd_str = ' '.join(command)
-            print(f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: {cmd_str}{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
+                f"{cmd_str}{constants.ANSI_RESET}"
+            )
+            print(msg)
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
     env.run_airflow_command([*command])
