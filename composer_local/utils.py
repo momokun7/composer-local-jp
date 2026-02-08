@@ -265,8 +265,10 @@ def check_auth_validity() -> Dict[str, Any]:
     except subprocess.CalledProcessError as e:
         return _auth_result(auth_info, _error_msg_for_returncode(e.returncode))
     except FileNotFoundError:
-        return _auth_result(auth_info,
-            "gcloudコマンドが見つかりません（Google Cloud SDKがインストールされていない可能性があります）",
+        return _auth_result(
+            auth_info,
+            "gcloudコマンドが見つかりません"
+            "（Google Cloud SDKがインストールされていない可能性があります）",
             ["Google Cloud SDKをインストールしてください",
              "https://cloud.google.com/sdk/docs/install を参照してください"],
         )

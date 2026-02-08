@@ -73,14 +73,22 @@ def main():
             else:
                 progress.update(task, description="[yellow]Variables に変更はありません")
                 progress.stop()
-                print(f"{constants.ANSI_YELLOW}Variables に変更はありませんでした。{constants.ANSI_RESET}")
+                msg = (
+                    f"{constants.ANSI_YELLOW}Variables に変更はありませんでした。"
+                    f"{constants.ANSI_RESET}"
+                )
+                print(msg)
 
         except Exception as e:
             progress.update(task, description="[red]Variables の取得/比較に失敗")
             progress.stop()
             # Secret が存在しない場合は新規作成
             if "not found" in str(e).lower() or "does not exist" in str(e).lower():
-                print(f"{constants.ANSI_YELLOW}Secret が存在しないため、新規作成します{constants.ANSI_RESET}")
+                msg = (
+                    f"{constants.ANSI_YELLOW}Secret が存在しないため、"
+                    f"新規作成します{constants.ANSI_RESET}"
+                )
+                print(msg)
                 secretmanager, _DefaultCredentialsError = require_gcp_secret_manager()
                 client = secretmanager.SecretManagerServiceClient()
                 parent = f"projects/{args.project}"

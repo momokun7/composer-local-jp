@@ -33,7 +33,10 @@ from composer_local.secret_manager_sync import export_variables_via_gcloud
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cloud Composer の Variables をローカル環境に直接同期します（Secret Manager 不要）"
+        description=(
+            "Cloud Composer の Variables をローカル環境に直接同期します"
+            "（Secret Manager 不要）"
+        )
     )
     parser.add_argument("--project", default=composer_settings.PROJECT_ID)
     parser.add_argument("--location", default=composer_settings.COMPOSER_LOCATION)
