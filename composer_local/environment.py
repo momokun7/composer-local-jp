@@ -367,6 +367,7 @@ class Environment:
         )
         self._copy_to_container(c, DOCKER_FILES / "entrypoint.sh")
         self._copy_to_container(c, DOCKER_FILES / "run_as_user.sh")
+        self._copy_to_container(c, DOCKER_FILES / "webserver_config.py")
         return c
 
     def _auto_import_variables(self):
@@ -393,6 +394,7 @@ class Environment:
         if app.status != constants.ContainerStatus.RUNNING:
             self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
             self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
+            self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
             app.start()
         self._ensure_attached(net, app)
         self._auto_import_variables()
@@ -420,11 +422,11 @@ class Environment:
                     "extra__google_cloud_platform__scope":
                         "https://www.googleapis.com/auth/cloud-platform",
                 }),
-            ])
+            ], quiet=True)
         except Exception:
             pass
 
-        # Admin ユーザーを作成
+        # Admin ユーザーを作成（AUTH_ROLE_PUBLIC のフォールバック用）
         try:
             self.run_airflow_command([
                 "users", "create",
@@ -434,7 +436,7 @@ class Environment:
                 "--email", composer_settings.ADMIN_EMAIL,
                 "--firstname", composer_settings.ADMIN_FIRSTNAME,
                 "--lastname", composer_settings.ADMIN_LASTNAME,
-            ])
+            ], quiet=True)
         except Exception:
             pass
 
@@ -481,8 +483,6 @@ class Environment:
         print(f"{P6}   ╚═══╝ ╚═╝     {R}")
         print()
         print(f"{G} Airflow Web UI:{R}  {C}http://localhost:{self.port}{R}")
-        print(f"{G} ユーザー名:{R}      {C}admin{R}")
-        print(f"{G} パスワード:{R}      {C}admin{R}")
         print()
         print(f"{Y}=========================================={R}")
         print()
@@ -506,6 +506,7 @@ class Environment:
         if app.status != constants.ContainerStatus.RUNNING:
             self._copy_to_container(app, DOCKER_FILES / "entrypoint.sh")
             self._copy_to_container(app, DOCKER_FILES / "run_as_user.sh")
+            self._copy_to_container(app, DOCKER_FILES / "webserver_config.py")
             app.start()
         self._ensure_attached(net, app)
         self._auto_import_variables()
@@ -523,8 +524,8 @@ class Environment:
             self._show_setup_banner()
         else:
             print(f"{self.name} 環境を起動しました。")
+            print(f"Airflow Web UI: http://localhost:{self.port}")
 
-        print(f"Airflow Web UI: http://localhost:{self.port}")
         print("Ctrl+C で停止します...")
 
         # Set up signal handlers to ensure containers are stopped
@@ -553,9 +554,15 @@ class Environment:
         atexit.register(cleanup_containers)
 
         try:
-            # Attach to the application container logs in foreground
-            for log_line in app.logs(stream=True, follow=True):
-                print(log_line.decode('utf-8').rstrip())
+            # 現在時刻以降の ERROR/WARNING のみ表示（詳細は make logs で確認）
+            now = int(time.time())
+            for log_line in app.logs(stream=True, follow=True, since=now):
+                line = log_line.decode('utf-8').rstrip()
+                if not line:
+                    continue
+                line_upper = line.upper()
+                if any(p in line_upper for p in (' ERROR ', '[ERROR]', ' WARNING ', '[WARNING]')):
+                    print(line)
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
             # Handle Ctrl+C, terminal close, or broken pipe
             print(f"\n{self.name} 環境を停止しています...")
@@ -637,10 +644,13 @@ class Environment:
             for line in stream.decode("utf-8").split("\n"):
                 console.get_console().print(line)
 
-    def run_airflow_command(self, command: List) -> None:
+    def run_airflow_command(self, command: List, quiet: bool = False) -> None:
         app = self._get_container(self.container_name, assert_running=True)
         cmd = ["/home/airflow/run_as_user.sh", "airflow", *command]
         result = app.exec_run(cmd=cmd)
+
+        if quiet:
+            return
 
         # 不要なログメッセージをフィルタリング
         output = result.output.decode()

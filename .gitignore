@@ -137,3 +137,4 @@ dmypy.json
 composer/
 composer_local/composer_settings.py
 .make-settings.mk
+claude.md
