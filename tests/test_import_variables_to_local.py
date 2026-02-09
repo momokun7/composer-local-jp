@@ -4,14 +4,12 @@ GCP Secret Manager API、Docker API をモック化してテストする。
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from composer_local import constants
 from composer_local.import_variables_to_local import _import_variables_to_container
-
 
 # =============================================================================
 # _import_variables_to_container のテスト
@@ -80,7 +78,8 @@ class TestImportVariablesToLocalMain:
     @patch("composer_local.import_variables_to_local.composer_environment.Environment.load_from_config")
     @patch("composer_local.import_variables_to_local.argparse.ArgumentParser.parse_args")
     def test_main_imports_variables(
-        self, mock_args, mock_load, mock_create_sync, mock_import, mock_setup_logging, tmp_path, capsys
+        self, mock_args, mock_load, mock_create_sync,
+        mock_import, mock_setup_logging, tmp_path, capsys,
     ):
         """正常に Variables をインポートする."""
         local_env_dir = tmp_path / "composer" / "test-env"

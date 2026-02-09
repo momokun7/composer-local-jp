@@ -3,7 +3,6 @@
 GCP Composer API をモック化してテストする。
 """
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ from composer_local.sync_settings import (
     sync_composer_settings,
     write_composer_settings,
 )
-
 
 # =============================================================================
 # _compose_env_resource_name のテスト
