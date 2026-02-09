@@ -1,70 +1,66 @@
 [project]
 name = "composer-local-jp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Google Cloud Composer local development tool (Japanese optimized, derived from GoogleCloudPlatform/composer-local-dev)"
 authors = [{ name = "Hirohiko Nakui" }]
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11.8,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = [
-    "apache-airflow==2.10.2",
-    "apache-airflow-providers-amazon>=8.28.0,<9.0.0",
-    "apache-airflow-providers-google==14.0.0",
-    "boto3>=1.35.16,<2.0.0",
+    "apache-airflow==2.10.5",
+    "apache-airflow-providers-google>=14.0.0",
     "click>=8.1.8,<9.0.0",
     "docker>=7.0.0",
-    "google-auth>=2.29.0,<3.0.0",
-    "google-cloud-orchestration-airflow>=1.2.0",
-    "google-cloud-artifact-registry>=1.2.0",
-    "rich_click==1.4.0",
     "rich>=13.7.0",
-    "jinja2>=3.1.5,<4.0.0",
-    "python-dotenv>=1.0.0,<2.0.0",
-    "dotenv>=0.9.9,<1.0.0",
 ]
 [project.scripts]
 composer-local = "composer_local.__main__:cli"
 
 
 [project.optional-dependencies]
+gcp = [
+    "google-auth>=2.29.0,<3.0.0",
+    "google-cloud-orchestration-airflow>=1.2.0",
+    "google-cloud-artifact-registry>=1.2.0",
+    "google-cloud-secret-manager>=2.0.0",
+]
 dev = [
-    "black>=24.2.0,<25.0.0",
-    "isort>=5.13.2,<6.0.0",
-    "pyproject-flake8>=6.1.0,<7.0.0",
+    "ruff>=0.8.0",
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-cov>=6.0.0,<7.0.0",
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 100
+target-version = "py311"
 
-[tool.isort]
-profile = "black"
-line_length = 100
-
-[tool.flake8]
-max-line-length = 100
-max-complexity = 18
-ignore = "E203,W503,W504"
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E203"]
 exclude = [
     ".venv",
     "venv",
     ".git",
     "__pycache__",
-    "*.pyc",
     ".pytest_cache",
     "site-packages",
-    ".venv/lib/python*/site-packages",
     "**/site-packages/**",
-    "**/google/api_core/grpc_helpers.py",
     "**/google/**",
-    "**/grpc_helpers.py",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=composer_local --cov-report=term-missing"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["black>=24.10.0", "isort>=5.13.2", "pyproject-flake8>=6.1.0"]
+dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0"]
+
+[tool.hatch.version]
+path = "composer_local/version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["dags", "composer_local"]
+packages = ["composer_local"]

@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
-from google.cloud.orchestration.airflow import service_v1
-
 from composer_local import errors
+from composer_local.utils import require_gcp_composer
 
 LOG = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ def fetch_composer_env_details(project_id: str, location: str, env_name: str) ->
     Returns:
         dict: キーとして image_version, python_version, location, env_name を持つ辞書
     """
+    service_v1 = require_gcp_composer()
     client = service_v1.EnvironmentsClient()
     name = _compose_env_resource_name(project_id, location, env_name)
     try:
@@ -53,6 +54,16 @@ def fetch_composer_env_details(project_id: str, location: str, env_name: str) ->
     }
 
 
+def _update_setting(content: str, key: str, value: str) -> str:
+    """既存の設定ファイル内の特定のキーの値を更新する。キーが存在しない場合は末尾に追加する。"""
+    pattern = re.compile(rf'^({key}\s*=\s*).*$', re.MULTILINE)
+    new_line = f'{key} = "{value}"'
+    if pattern.search(content):
+        return pattern.sub(new_line, content)
+    # キーが存在しない場合、末尾に追加
+    return content.rstrip() + f"\n{new_line}\n"
+
+
 def write_composer_settings(
     settings_path: Path,
     env_name: str,
@@ -60,30 +71,25 @@ def write_composer_settings(
     image_version: str,
     python_version: Optional[str],
 ) -> None:
-    """composer_settings.py を Cloud Composer の値で上書きします。"""
-    content = (
-        '"""\n'
-        "このファイルは、ローカル環境の Composer 設定を管理します。\n"
-        "Cloud Composer の設定をこのファイルに同期することで、ローカル環境の Composer 設定を管理できます。\n\n"
-        "このファイルの設定は以下の場所で使用されます：\n"
-        "- Makefile: 環境作成、認証、変数同期などのコマンド\n"
-        "- CLI: composer-local コマンドのデフォルト値\n"
-        "- 各種スクリプト: プロジェクトID、サービスアカウントなどの参照\n"
-        '"""\n\n'
-        "# =============================================================================\n"
-        "# Cloud Composer 環境設定\n"
-        "# =============================================================================\n\n"
-        "# Cloud Composer 環境の識別情報\n"
-        f"COMPOSER_ENV_NAME = \"{env_name}\"\n"
-        f"COMPOSER_LOCATION = \"{location}\"\n\n"
-        "# ランタイム/ツールバージョン\n"
-        "# 例: \"composer-3-airflow-2.10.5-build.0\"\n"
-        f"COMPOSER_IMAGE_VERSION = \"{image_version}\"\n\n"
-        "# Composer イメージで報告される Python のメジャー/マイナーバージョン（文字列）\n"
-        f"COMPOSER_PYTHON_VERSION = \"{python_version or ''}\"\n"
-    )
+    """composer_settings.py の Composer 関連設定のみを更新します。既存の設定は保持されます。"""
+    if settings_path.exists():
+        content = settings_path.read_text()
+    else:
+        content = ""
+
+    updates = {
+        "COMPOSER_ENV_NAME": env_name,
+        "COMPOSER_LOCATION": location,
+        "COMPOSER_IMAGE_VERSION": image_version,
+        "COMPOSER_PYTHON_VERSION": python_version or "",
+    }
+
+    for key, value in updates.items():
+        content = _update_setting(content, key, value)
+
     settings_path.write_text(content)
-    LOG.info("Cloud Composer から %s を更新しました", settings_path)
+    updated_keys = ", ".join(updates.keys())
+    LOG.info("Cloud Composer から %s を更新しました（%s）", settings_path, updated_keys)
 
 
 def sync_composer_settings(
