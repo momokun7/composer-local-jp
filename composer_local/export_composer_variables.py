@@ -83,7 +83,8 @@ def main():
             progress.update(task, description="[red]Variables の取得/比較に失敗")
             progress.stop()
             # Secret が存在しない場合は新規作成
-            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
+            err_lower = str(e).lower()
+            if "not found" in err_lower or "does not exist" in err_lower or "destroyed" in err_lower:
                 msg = (
                     f"{constants.ANSI_YELLOW}Secret が存在しないため、"
                     f"新規作成します{constants.ANSI_RESET}"

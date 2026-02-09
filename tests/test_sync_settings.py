@@ -178,10 +178,14 @@ class TestWriteComposerSettings:
         content = settings_path.read_text()
         assert 'COMPOSER_PYTHON_VERSION = ""' in content
 
-    def test_overwrites_existing_file(self, tmp_path):
-        """既存のファイルを上書きする."""
+    def test_preserves_existing_settings(self, tmp_path):
+        """既存の設定を保持しつつ Composer 関連の値のみ更新する."""
         settings_path = tmp_path / "composer_settings.py"
-        settings_path.write_text("old content")
+        settings_path.write_text(
+            'PROJECT_ID = "my-project"\n'
+            'COMPOSER_IMAGE_VERSION = "old-version"\n'
+            'SECRET_ID = "my-secret"\n'
+        )
         write_composer_settings(
             settings_path,
             env_name="new-env",
@@ -190,15 +194,20 @@ class TestWriteComposerSettings:
             python_version="3",
         )
         content = settings_path.read_text()
-        assert "old content" not in content
+        assert 'PROJECT_ID = "my-project"' in content
+        assert 'SECRET_ID = "my-secret"' in content
+        assert 'COMPOSER_IMAGE_VERSION = "composer-3-airflow-2.10.5"' in content
         assert 'COMPOSER_ENV_NAME = "new-env"' in content
 
-    def test_content_contains_docstring(self, tmp_path):
-        """出力にドキュメント文字列が含まれる."""
+    def test_adds_missing_keys(self, tmp_path):
+        """既存ファイルに Composer 設定がない場合、追加する."""
         settings_path = tmp_path / "composer_settings.py"
+        settings_path.write_text('PROJECT_ID = "my-project"\n')
         write_composer_settings(settings_path, "e", "l", "v", "p")
         content = settings_path.read_text()
-        assert "ローカル環境の Composer 設定を管理します" in content
+        assert 'PROJECT_ID = "my-project"' in content
+        assert 'COMPOSER_ENV_NAME = "e"' in content
+        assert 'COMPOSER_IMAGE_VERSION = "v"' in content
 
 
 # =============================================================================

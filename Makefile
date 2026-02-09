@@ -263,6 +263,9 @@ auth-sa:
 test:
 	@uv run pytest tests/ -v
 
+test-gcp:
+	@uv run python scripts/test_gcp_integration.py
+
 lint:
 	@uv run --active -- ruff check composer_local/ scripts/ tests/
 	@echo "lint OK"
