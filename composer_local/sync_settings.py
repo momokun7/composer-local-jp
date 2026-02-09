@@ -88,7 +88,8 @@ def write_composer_settings(
         content = _update_setting(content, key, value)
 
     settings_path.write_text(content)
-    LOG.info("Cloud Composer から %s を更新しました（%s）", settings_path, ", ".join(updates.keys()))
+    updated_keys = ", ".join(updates.keys())
+    LOG.info("Cloud Composer から %s を更新しました（%s）", settings_path, updated_keys)
 
 
 def sync_composer_settings(

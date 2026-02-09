@@ -25,7 +25,6 @@ GCP 連携機能が正しく動作するかを段階的に検証します。
 """
 
 import argparse
-import importlib
 import json
 import subprocess
 import sys
@@ -109,7 +108,11 @@ def test_settings() -> dict:
     }
     for attr, desc in optional.items():
         value = getattr(settings, attr, None)
-        if value and value not in ("", "your-secret-id", "your-sa@your-project.iam.gserviceaccount.com"):
+        dummy_values = (
+            "", "your-secret-id",
+            "your-sa@your-project.iam.gserviceaccount.com",
+        )
+        if value and value not in dummy_values:
             ok(f"{desc}: {value}")
             results["settings"][attr] = value
         else:
@@ -169,7 +172,10 @@ def test_auth() -> dict:
         if project:
             ok(f"gcloud デフォルトプロジェクト: {project}")
         else:
-            warn("gcloud のデフォルトプロジェクトが未設定（composer_settings.py の設定が使われます）")
+            warn(
+                "gcloud のデフォルトプロジェクトが未設定"
+                "（composer_settings.py の設定が使われます）"
+            )
     except subprocess.CalledProcessError:
         warn("gcloud プロジェクト設定の取得に失敗")
 
@@ -192,7 +198,10 @@ def test_auth() -> dict:
         )
         ok("Application Default Credentials (ADC) が有効")
     except subprocess.CalledProcessError:
-        warn("ADC が未設定。Secret Manager 連携には 'gcloud auth application-default login' が必要です")
+        warn(
+            "ADC が未設定。Secret Manager 連携には"
+            " 'gcloud auth application-default login' が必要です"
+        )
 
     return results
 
@@ -289,7 +298,10 @@ def test_secret_manager(settings: dict) -> dict:
             warn(f"Secret '{secret_id}' が存在しません（初回は export-vars で作成されます）")
             results["passed"] = None
         elif "destroyed" in error_str:
-            warn(f"Secret '{secret_id}' の全バージョンが DESTROYED 状態です（sync-vars-sm で新しいバージョンが作成されます）")
+            warn(
+                f"Secret '{secret_id}' の全バージョンが DESTROYED 状態です"
+                "（sync-vars-sm で新しいバージョンが作成されます）"
+            )
             results["passed"] = None
         else:
             fail(f"Secret Manager への接続に失敗: {e}")
@@ -419,7 +431,11 @@ def test_docker() -> dict:
     # 既存の composer コンテナ
     try:
         containers = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=composer-local", "--format", "{{.Names}}\t{{.Status}}"],
+            [
+                "docker", "ps", "-a",
+                "--filter", "name=composer-local",
+                "--format", "{{.Names}}\t{{.Status}}",
+            ],
             capture_output=True, text=True, check=True, timeout=10,
         ).stdout.strip()
         if containers:
@@ -536,7 +552,11 @@ def main():
             warn(f"{name}（スキップ）")
             skipped += 1
 
-    print(f"\n  合計: {total}  成功: {GREEN}{passed}{RESET}  失敗: {RED}{failed}{RESET}  スキップ: {YELLOW}{skipped}{RESET}")
+    print(
+        f"\n  合計: {total}  成功: {GREEN}{passed}{RESET}"
+        f"  失敗: {RED}{failed}{RESET}"
+        f"  スキップ: {YELLOW}{skipped}{RESET}"
+    )
 
     if failed > 0:
         print(f"\n{RED}一部のテストが失敗しました。上記のエラーメッセージを確認してください。{RESET}")

@@ -3,14 +3,11 @@
 GCP API、Docker API、subprocess をモック化してテストする。
 """
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from composer_local import constants
-
 
 # =============================================================================
 # main 関数のテスト

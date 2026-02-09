@@ -84,7 +84,12 @@ def main():
             progress.stop()
             # Secret が存在しない場合は新規作成
             err_lower = str(e).lower()
-            if "not found" in err_lower or "does not exist" in err_lower or "destroyed" in err_lower:
+            recoverable = (
+                "not found" in err_lower
+                or "does not exist" in err_lower
+                or "destroyed" in err_lower
+            )
+            if recoverable:
                 msg = (
                     f"{constants.ANSI_YELLOW}Secret が存在しないため、"
                     f"新規作成します{constants.ANSI_RESET}"
