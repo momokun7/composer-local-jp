@@ -13,12 +13,9 @@ import shutil
 from typing import List, Optional, Union
 
 import click
-import rich.markdown
 
-from composer_local import composer_settings, console, constants
+from composer_local import composer_settings, console, constants, errors, files, utils, version
 from composer_local import environment as composer_environment
-from composer_local import errors, files, secret_manager_sync, utils, version
-from composer_local.sync_settings import sync_composer_settings
 
 LOG = logging.getLogger(__name__)
 
@@ -71,17 +68,29 @@ class LogsMaxLines(click.ParamType):
 
 @click.group(name="composer-local")
 @click.version_option(version=version.__version__, prog_name="composer-local")
-def cli():
-    pass
+@click.option("--verbose", is_flag=True, default=False, help="詳細なログを表示する")
+@click.option("--debug", is_flag=True, default=False, help="デバッグログを表示する")
+@click.pass_context
+def cli(ctx, verbose, debug):
+    """ローカル Composer 環境を管理する CLI ツールです。
 
+    Docker を使用して Cloud Composer 互換の Airflow 環境を
+    ローカルで作成・起動・管理できます。
 
-verbose_mode = click.option("--verbose", is_flag=True, default=False, help="詳細なログを表示する")
-debug_mode = click.option("--debug", is_flag=True, default=False, help="デバッグログを表示する")
+    基本的な使い方:
+      composer-local create --from-image-version IMAGE ENV
+      composer-local start ENV
+      composer-local logs ENV --follow
+    """
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    ctx.obj["debug"] = debug
+    utils.setup_logging(verbose, debug)
 
 option_port = click.option(
     "--web-server-port",
     "--port",
-    type=click.IntRange(min=0, max=65536),
+    type=click.IntRange(min=1, max=65535),
     help="Airflow Web サーバーのポート",
     show_default="設定ファイルから読み込み",
     metavar="PORT",
@@ -145,8 +154,6 @@ option_location = click.option(
     metavar="DATABASE_ENGINE",
 )
 @required_environment
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
 def create(
     from_source_environment: str,
@@ -155,25 +162,17 @@ def create(
     location: str,
     web_server_port: Optional[int],
     environment: str,
-    verbose: bool,
-    debug: bool,
     database_engine: str,
     dags_path: Optional[pathlib.Path] = None,
-):
-    utils.setup_logging(verbose, debug)
+) -> None:
     print(f"{constants.ANSI_BLUE}環境を作成しています...{constants.ANSI_RESET}")
     utils.assert_environment_name_is_valid(environment)
     if not from_source_environment and not from_image_version:
         raise click.UsageError(
-            "環境の生成元が未指定です。--from-source-environment または --from-image-version を指定してください。"
+            "環境の生成元が未指定です。"
+            "--from-source-environment または --from-image-version を指定してください。"
         )
     project = utils.resolve_project_id(project)
-    # 本ツールでは production プロジェクトは対象外
-    if project and "production" in project.lower():
-        raise click.UsageError(
-            "ローカル Composer は本番プロジェクトを対象にできません: "
-            f"{project}。代わりにステージング プロジェクトを使用してください。"
-        )
     env_dir = pathlib.Path("composer", environment)
     if env_dir.is_dir():
         click.confirm(
@@ -208,11 +207,8 @@ def create(
 @cli.command()
 @optional_environment
 @option_port
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
-def start(environment: Optional[str], web_server_port: Optional[int], verbose: bool, debug: bool):
-    utils.setup_logging(verbose, debug)
+def start(environment: Optional[str], web_server_port: Optional[int]) -> None:
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, web_server_port)
     env.start_foreground()
@@ -221,11 +217,8 @@ def start(environment: Optional[str], web_server_port: Optional[int], verbose: b
 
 @cli.command()
 @optional_environment
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
-def stop(environment: Optional[str], verbose: bool, debug: bool):
-    utils.setup_logging(verbose, debug)
+def stop(environment: Optional[str]) -> None:
     print(f"{constants.ANSI_YELLOW}環境を停止しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
@@ -235,8 +228,6 @@ def stop(environment: Optional[str], verbose: bool, debug: bool):
 
 @cli.command()
 @optional_environment
-@verbose_mode
-@debug_mode
 @click.option("-f", "--follow", is_flag=True, default=False, help="ログを追尾表示する")
 @click.option(
     "-l",
@@ -248,21 +239,17 @@ def stop(environment: Optional[str], verbose: bool, debug: bool):
 )
 @errors.catch_exceptions()
 def logs(
-    environment: Optional[str], max_lines: Union[str, int], follow: bool, verbose: bool, debug: bool
-):
-    utils.setup_logging(verbose, debug)
+    environment: Optional[str], max_lines: Union[str, int], follow: bool
+) -> None:
     print(f"{constants.ANSI_BLUE}ログを表示しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
     env.logs(follow, max_lines)
 
 
-@verbose_mode
-@debug_mode
 @cli.command(name="list")
 @errors.catch_exceptions()
-def list_command(verbose: bool, debug: bool):
-    utils.setup_logging(verbose, debug)
+def list_command():
     current_path = pathlib.Path.cwd().resolve()
     envs = files.get_environment_directories()
     environments_status = composer_environment.get_environments_status(envs)
@@ -277,11 +264,8 @@ def list_command(verbose: bool, debug: bool):
 
 @cli.command()
 @optional_environment
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
-def describe(environment: Optional[str], verbose: bool, debug: bool):
-    utils.setup_logging(verbose, debug)
+def describe(environment: Optional[str]) -> None:
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
     env.describe()
@@ -289,8 +273,6 @@ def describe(environment: Optional[str], verbose: bool, debug: bool):
 
 @cli.command()
 @optional_environment
-@verbose_mode
-@debug_mode
 @click.option(
     "--skip-confirmation",
     is_flag=True,
@@ -305,9 +287,8 @@ def describe(environment: Optional[str], verbose: bool, debug: bool):
 )
 @errors.catch_exceptions()
 def remove(
-    environment: Optional[str], verbose: bool, debug: bool, skip_confirmation: bool, force: bool
-):
-    utils.setup_logging(verbose, debug)
+    environment: Optional[str], skip_confirmation: bool, force: bool
+) -> None:
     print(f"{constants.ANSI_YELLOW}環境を削除しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
     if not skip_confirmation:
@@ -317,42 +298,72 @@ def remove(
     try:
         env = composer_environment.Environment.load_from_config(env_path, None)
     except errors.InvalidConfigurationError:
-        md = rich.markdown.Markdown(constants.MALFORMED_CONFIG_REMOVING_CONTAINER)
-        console.get_console().print(md)
+        console.get_console().print(
+            f"{constants.ANSI_YELLOW}警告: 設定ファイルが破損しています。{constants.ANSI_RESET}"
+        )
+        if force:
+            # 設定ファイルが破損しているため Environment オブジェクトを
+            # 生成できず、Docker SDK 経由での操作ができない。
+            # フォールバックとして docker CLI を直接呼び出し、
+            # コンテナを強制削除する。
+            import subprocess
+            env_name = env_path.name
+            container_names = [
+                f"{constants.CONTAINER_NAME}-{env_name}",
+                f"{constants.DB_CONTAINER_NAME}-{env_name}",
+            ]
+            for name in container_names:
+                try:
+                    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+                except Exception:
+                    pass
     else:
         env.remove(force, force_error=click.UsageError(constants.USE_FORCE_TO_REMOVE_ERROR))
     shutil.rmtree(env_path)
     print(f"{constants.ANSI_GREEN}環境の削除が完了しました。{constants.ANSI_RESET}")
 
 
-@cli.command(context_settings=dict(ignore_unknown_options=True))
+@cli.command(name="run-airflow", context_settings=dict(ignore_unknown_options=True))
 @required_environment
-@verbose_mode
-@debug_mode
 @click.argument("command", nargs=-1, required=True, metavar="COMMAND", type=click.UNPROCESSED)
+@click.pass_context
 @errors.catch_exceptions()
-def run_airflow_cmd(environment: Optional[str], command: List[str], verbose: bool, debug: bool):
-    utils.setup_logging(verbose, debug)
+def run_airflow_cmd(ctx, environment: Optional[str], command: List[str]):
+    verbose = ctx.obj.get("verbose", False)
     # Contextual, friendly messages (default quiet)
     try:
         subcmd = command[0] if command else ""
         if subcmd == "users" and len(command) >= 2 and command[1] == "create":
-            print(f"{constants.ANSI_BLUE}Web UI 用の管理者ユーザーを作成しています...{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_BLUE}Web UI 用の管理者ユーザーを"
+                f"作成しています...{constants.ANSI_RESET}"
+            )
+            print(msg)
         elif (
             subcmd == "connections"
             and len(command) >= 4
             and command[1] == "add"
             and command[2] == "google_cloud_default"
         ):
-            print(f"{constants.ANSI_BLUE}Google Cloud 接続を設定しています...{constants.ANSI_RESET}")
+            msg = f"{constants.ANSI_BLUE}Google Cloud 接続を設定しています...{constants.ANSI_RESET}"
+            print(msg)
         elif verbose:
             cmd_str = ' '.join(command)
-            print(f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: {cmd_str}{constants.ANSI_RESET}")
-    except Exception:
+            msg = (
+                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
+                f"{cmd_str}{constants.ANSI_RESET}"
+            )
+            print(msg)
+    except Exception as e:
+        LOG.debug(f"出力表示エラー: {e}")
         # Fallback to verbose banner only
         if verbose:
             cmd_str = ' '.join(command)
-            print(f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: {cmd_str}{constants.ANSI_RESET}")
+            msg = (
+                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
+                f"{cmd_str}{constants.ANSI_RESET}"
+            )
+            print(msg)
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
     env.run_airflow_command([*command])
@@ -374,23 +385,11 @@ def run_airflow_cmd(environment: Optional[str], command: List[str], verbose: boo
     show_default=True,
     metavar="SECRET_ID",
 )
-@click.option(
-    "--airflow-url",
-    default=composer_settings.AIRFLOW_URL,
-    help="ローカル Airflow の URL",
-    show_default=True,
-    metavar="URL",
-)
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
 def sync_vars(
     environment: Optional[str],
     project: Optional[str],
     secret_id: str,
-    airflow_url: str,  # 現在未使用だが、将来の拡張のため残す
-    verbose: bool,
-    debug: bool,
 ):
     """Secret Manager からローカル Airflow 環境へ Variables を同期する。
 
@@ -400,20 +399,10 @@ def sync_vars(
     - Airflow が起動中であれば即時に `airflow variables import` を実行
       未起動であれば起動時に自動インポートされる
     """
-    utils.setup_logging(verbose, debug)
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
 
-    # Force staging usage for local composer
     resolved_project = project or env.project_id or utils.get_project_id()
-    if resolved_project and "staging" not in resolved_project.lower():
-        raise click.UsageError(
-            "ローカル Composer はステージングのみに対応しています。"
-            f"解決されたプロジェクト '{resolved_project}' はステージングではありません。"
-        )
-    # Prefer environment config if it clearly indicates staging
-    if env.project_id and "staging" in env.project_id.lower():
-        resolved_project = env.project_id
     if not resolved_project:
         raise click.UsageError(
             "GCP プロジェクト ID を解決できませんでした。--project を指定してください。"
@@ -423,67 +412,65 @@ def sync_vars(
     console.get_console().print(f"プロジェクト: {resolved_project}")
     console.get_console().print(f"シークレット ID: {secret_id}")
 
+    from composer_local import secret_manager_sync
+
+    sync_client = secret_manager_sync.create_sync_client(
+        project_id=resolved_project,
+        local_env_path=env_path,
+    )
+    sync_client.secret_id = secret_id
+
+    variables_json_path = env_path / "data" / "variables.json"
+    imported_successfully = False
+
+    # ---- Step 1: Secret Manager から Variables を取得・書き出し ----
     try:
-        sync_client = secret_manager_sync.create_sync_client(
-            project_id=resolved_project,
-            local_env_path=env_path,
-        )
-        # ensure single-secret id is used
-        sync_client.secret_id = secret_id
-
-        # Secret ManagerからVariablesを同期（削除→インポートを統合処理）
         sync_client.sync_to_local_airflow(env)
-
-        # Try to import into running local Airflow immediately;
-        # otherwise leave for auto-import on next start
-        variables_json_path = env_path / "data" / "variables.json"
-        try:
-            from composer_local import constants as _c
-
-            if variables_json_path.is_file():
-                try:
-                    # If app is running, import now
-                    status = env.status()
-                    if str(status).lower() == str(_c.ContainerStatus.RUNNING):
-                        console.get_console().print(
-                            "起動中の Airflow へ Variables をインポートします..."
-                        )
-                        env.run_airflow_command(
-                            [
-                                "variables",
-                                "import",
-                                "/home/airflow/gcs/data/variables.json",
-                            ]
-                        )
-                        # Remove after successful import
-                        try:
-                            variables_json_path.unlink()
-                            console.get_console().print(
-                                "一時ファイル variables.json を削除しました"
-                            )
-                        except Exception:
-                            pass
-                    else:
-                        console.get_console().print(
-                            "ローカル Airflow が起動していません。次回起動時に自動インポートされます。"
-                        )
-                except Exception as ie:
-                    console.get_console().print(f"Variables のインポートに失敗しました: {ie}")
-        except Exception:
-            pass
-
-        console.get_console().print("Variables の同期が完了しました！")
-
     except Exception as e:
         console.get_console().print(f"Variables の同期でエラーが発生しました: {e}")
         raise
+
+    # ---- Step 2: 起動中の Airflow へ即時インポート ----
+    try:
+        if variables_json_path.is_file():
+            status = env.status()
+            if str(status).lower() == str(constants.ContainerStatus.RUNNING):
+                console.get_console().print(
+                    "起動中の Airflow へ Variables をインポートします..."
+                )
+                env.run_airflow_command(
+                    [
+                        "variables",
+                        "import",
+                        "/home/airflow/gcs/data/variables.json",
+                    ]
+                )
+                imported_successfully = True
+            else:
+                console.get_console().print(
+                    "ローカル Airflow が起動していません。次回起動時に自動インポートされます。"
+                )
+    except Exception as e:
+        console.get_console().print(f"Variables のインポートに失敗しました: {e}")
+
+    # ---- Step 3: クリーンアップ（インポート成功時のみ一時ファイルを削除） ----
+    if imported_successfully:
+        try:
+            variables_json_path.unlink()
+            console.get_console().print(
+                "一時ファイル variables.json を削除しました"
+            )
+        except Exception as e:
+            LOG.debug(f"一時ファイル削除失敗: {e}")
+
+    console.get_console().print("Variables の同期が完了しました！")
 
 
 @cli.command(name="sync-settings")
 @click.option(
     "-p",
     "--project",
-    help="GCP project id",
+    help="GCP プロジェクト ID",
     required=True,
     metavar="PROJECT_ID",
 )
@@ -502,14 +489,13 @@ def sync_vars(
     show_default=True,
     metavar="ENV_NAME",
 )
-@verbose_mode
-@debug_mode
 @errors.catch_exceptions()
-def sync_settings(project: str, location: str, env_name: str, verbose: bool, debug: bool):
-    """Sync composer_local/composer_settings.py from Cloud Composer settings."""
-    utils.setup_logging(verbose, debug)
+def sync_settings(project: str, location: str, env_name: str):
+    """Cloud Composer の設定をローカルに同期します。"""
     msg = "Cloud Composer の設定を composer_settings.py に同期しています..."
     print(f"{constants.ANSI_BLUE}{msg}{constants.ANSI_RESET}")
+    from composer_local.sync_settings import sync_composer_settings
+
     settings_path = pathlib.Path(__file__).parent / "composer_settings.py"
     sync_composer_settings(
         project_id=project,

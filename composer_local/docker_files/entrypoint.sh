@@ -1,38 +1,85 @@
 #!/bin/sh
 
-set -xe
+set -e
 
 run_as_user=/home/airflow/run_as_user.sh
 
 init_airflow() {
-  $run_as_user mkdir -p ${AIRFLOW__CORE__DAGS_FOLDER}
-  $run_as_user mkdir -p ${AIRFLOW__CORE__PLUGINS_FOLDER}
-  $run_as_user mkdir -p ${AIRFLOW__CORE__DATA_FOLDER}
+  echo "=== [3/5] パッケージインストール ==="
+
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__DAGS_FOLDER}"
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__PLUGINS_FOLDER}"
+  "$run_as_user" mkdir -p "${AIRFLOW__CORE__DATA_FOLDER}"
 
   if [ -f /var/local/setup_python_command.sh ]; then
-      $run_as_user /var/local/setup_python_command.sh
+      "$run_as_user" /var/local/setup_python_command.sh
   fi
 
-  $run_as_user pip3 install --upgrade -r composer_requirements.txt
-  $run_as_user pip3 check
-
-  airflow_version=$(${run_as_user} airflow version | grep -o "^[0-9\.]*")
-
-  original_ifs="$IFS"
-  IFS='.'
-  set -- $airflow_version
-  major="$1"
-  minor="$2"
-  patch="$3"
-  IFS="$original_ifs"
-
-  if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
-    $run_as_user airflow db init
-  else
-    $run_as_user airflow db migrate
+  # uv がなければインストール（初回のみ、バイナリ直接DLで高速）
+  if ! command -v uv > /dev/null 2>&1; then
+    echo "uv をインストールしています..."
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh 2>/dev/null \
+      || pip3 install --quiet uv \
+      || { echo "エラー: uv のインストールに失敗しました"; exit 1; }
   fi
 
-  # Do NOT override AUTH_ROLE_PUBLIC. Keep default auth; no public admin.
+  # requirements が変更された場合のみインストールを実行
+  req_hash=$(md5sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1 || sha256sum composer_requirements.txt 2>/dev/null | cut -d' ' -f1 || echo "no-hash")
+  cached_hash=""
+  if [ -f /tmp/.composer_req_hash ]; then
+    cached_hash=$(cat /tmp/.composer_req_hash)
+  fi
+  if [ "$req_hash" != "$cached_hash" ]; then
+    # Docker イメージ内の site-packages に書き込み不可のファイルがあるため権限を修正
+    python_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    sudo chmod -R u+w "/opt/python${python_version}/lib/python${python_version}/site-packages/airflow/" 2>/dev/null || true
+    sudo uv pip install --system -r composer_requirements.txt
+    echo "$req_hash" > /tmp/.composer_req_hash
+  fi
+
+  echo "=== [4/5] データベースマイグレーション ==="
+
+  # airflow version を高速取得（airflow コマンドのフル import を回避）
+  airflow_version=$("$run_as_user" python3 -c "from importlib.metadata import version; print(version('apache-airflow'))" 2>/dev/null)
+  if [ -z "$airflow_version" ]; then
+    airflow_version=$("${run_as_user}" airflow version | grep -o "^[0-9\.]*")
+  fi
+
+  # db migrate はバージョン変更時のみ実行（2回目以降スキップで大幅高速化）
+  cached_db_version=""
+  if [ -f /tmp/.airflow_db_version ]; then
+    cached_db_version=$(cat /tmp/.airflow_db_version)
+  fi
+  if [ "$airflow_version" != "$cached_db_version" ]; then
+    if [ -z "$airflow_version" ]; then
+      echo "エラー: Airflow バージョンの取得に失敗しました"
+      exit 1
+    fi
+
+    original_ifs="$IFS"
+    IFS='.'
+    set -- $airflow_version
+    major="$1"
+    minor="$2"
+    IFS="$original_ifs"
+
+    if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
+      if ! "$run_as_user" airflow db init; then
+        echo "エラー: データベース初期化に失敗しました"
+        echo "make recreate で環境を再作成してください"
+        exit 1
+      fi
+    else
+      if ! "$run_as_user" airflow db migrate; then
+        echo "エラー: データベースマイグレーションに失敗しました"
+        echo "make recreate で環境を再作成してください"
+        exit 1
+      fi
+    fi
+    echo "$airflow_version" > /tmp/.airflow_db_version
+  fi
+
+  # webserver_config.py で AUTH_ROLE_PUBLIC='Admin' を設定済み（ログイン画面スキップ）
 }
 
 create_user() {
@@ -54,10 +101,21 @@ create_user() {
 }
 
 main() {
+  echo "=== [1/5] ディレクトリ初期化 ==="
+
   mkdir -p /home/airflow/airflow
   sudo chown airflow:airflow /home/airflow/airflow
 
-  sudo chmod +x $run_as_user
+  # webserver_config.py を Airflow 設定ディレクトリに配置（ログイン画面スキップ）
+  if [ -f /home/airflow/webserver_config.py ]; then
+    cp /home/airflow/webserver_config.py /home/airflow/airflow/webserver_config.py && \
+      chown airflow:airflow /home/airflow/airflow/webserver_config.py || \
+      echo "警告: webserver_config.py の配置に失敗しました（ログイン画面が表示されます）"
+  fi
+
+  sudo chmod +x "$run_as_user"
+
+  echo "=== [2/5] ユーザー作成 ==="
 
   if [ "${COMPOSER_CONTAINER_RUN_AS_HOST_USER}" = "True" ]; then
     create_user "${COMPOSER_HOST_USER_NAME}" "${COMPOSER_HOST_USER_ID}" || true
@@ -68,13 +126,15 @@ main() {
 
   init_airflow
 
-  if [ ${AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR} = "True" ]; then
-    $run_as_user airflow dag-processor &
+  echo "=== [5/5] Airflow サービス起動 ==="
+
+  if [ "${AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR}" = "True" ]; then
+    "$run_as_user" airflow dag-processor &
   fi
 
-  $run_as_user airflow scheduler &
-  $run_as_user airflow triggerer &
-  exec $run_as_user airflow webserver
+  "$run_as_user" airflow scheduler &
+  "$run_as_user" airflow triggerer &
+  exec "$run_as_user" airflow webserver
 }
 
 main "$@"

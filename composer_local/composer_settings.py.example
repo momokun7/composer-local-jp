@@ -1,123 +1,69 @@
 """
-このファイルは、ローカル環境の Composer 設定を管理します。
-Cloud Composer の設定をこのファイルに同期することで、ローカル環境の Composer 設定を管理できます。
+ローカル環境の Composer 設定ファイル。
 
-このファイルの設定は以下の場所で使用されます：
-- Makefile: 環境作成、認証、変数同期などのコマンド
-- CLI: composer-local コマンドのデフォルト値
-- 各種スクリプト: プロジェクトID、サービスアカウントなどの参照
+注意: このファイルはローカル開発専用です。本番環境では使用しないでください。
+
+使い方:
+  1. このファイルを composer_settings.py にコピー
+  2. 必要に応じて設定値を変更（デフォルト値のまま動作可能）
 """
 
-# =============================================================================
-# Cloud Composer 環境設定
-# =============================================================================
+# --- ローカル環境 ---
 
-# Cloud Composer 環境の識別情報
-COMPOSER_ENV_NAME = "your-composer-env-name"
-COMPOSER_LOCATION = "your-composer-location"
-
-# ランタイム/ツールバージョン
-COMPOSER_IMAGE_VERSION = "composer-3-airflow-2.10.5-build.13"
-
-# Composer イメージで報告される Python のメジャー/マイナーバージョン（文字列）
-COMPOSER_PYTHON_VERSION = ""
-
-# =============================================================================
-# Google Cloud プロジェクト設定
-# =============================================================================
-
-# プロジェクトID（staging環境）
-PROJECT_ID = "your-gcp-project-id"
-
-# サービスアカウント設定
-SERVICE_ACCOUNT = "your-service-account@your-gcp-project-id.iam.gserviceaccount.com"
-
-# =============================================================================
-# ローカル環境設定
-# =============================================================================
-
-# ローカル環境名
+# 環境名（コンテナ名のサフィックスになります）
 LOCAL_ENV_NAME = "my-local-env"
 
-# ローカル環境のポート
+# Airflow Web UI のポート番号
 LOCAL_PORT = 8080
 
-# DAGディレクトリのパス（相対パスまたは絶対パス）
-# Makefileでは $(PWD)/dags として使用されるため、相対パスで設定
+# Composer Docker イメージバージョン（make sync-settings で自動同期可能）
+COMPOSER_IMAGE_VERSION = "composer-3-airflow-2.10.5-build.13"
+
+# Python バージョン（空文字列 = イメージのデフォルトを使用）
+COMPOSER_PYTHON_VERSION = ""
+
+# DAG ディレクトリのパス（プロジェクトルートからの相対パス）
 DAGS_PATH = "dags"
 
-# =============================================================================
-# Secret Manager 設定
-# =============================================================================
+# --- GCP 連携（オプション。使う場合はコメントアウトを解除） ---
+# 詳細は docs/gcp-integration.md を参照
 
-# Airflow Variables を格納する Secret の ID
-SECRET_ID = "your-secret-id"
+# PROJECT_ID = ""
+# COMPOSER_LOCATION = ""       # 例: "asia-northeast1"
+# COMPOSER_ENV_NAME = ""
+# SERVICE_ACCOUNT = ""         # サービスアカウントのメールアドレス
+# SECRET_ID = ""               # Secret Manager のシークレット ID
 
-# =============================================================================
-# Airflow 設定
-# =============================================================================
+# --- Airflow ---
 
-# ローカル Airflow の URL
 AIRFLOW_URL = "http://localhost:8080"
 
-# 管理者ユーザーのデフォルト設定
+# 管理者アカウント（ローカル開発専用）
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_FIRSTNAME = "Admin"
 ADMIN_LASTNAME = "User"
 
-# =============================================================================
-# データベース設定
-# =============================================================================
+# --- データベース ---
 
-# データベースエンジン（postgresql または mysql）
 DATABASE_ENGINE = "postgresql"
-
-# PostgreSQL設定
 POSTGRES_USER = "postgres"
 POSTGRES_PASSWORD = "airflow"
 POSTGRES_DB = "airflow"
 POSTGRES_PORT = 5432
-POSTGRES_LOCAL_PORT = 25432
+POSTGRES_LOCAL_PORT = 25432    # ホスト側の公開ポート（デバッグ用）
 
-# DAGディレクトリのリスト間隔（秒）
-DAG_DIR_LIST_INTERVAL = 10
+# --- 詳細設定（通常は変更不要） ---
 
-# =============================================================================
-# 同期・監視設定
-# =============================================================================
-
-# Secret Manager 同期間隔（秒）
-SYNC_INTERVAL = 300  # 5 minutes
-
-# Webサーバー起動待機タイムアウト（秒）
-WEBSERVER_TIMEOUT = 300
-
-# Webサーバー起動確認間隔（秒）
-WEBSERVER_CHECK_INTERVAL = 2
-
-# =============================================================================
-# Docker設定
-# =============================================================================
-
-# メモリ制限（バイト）
-DOCKER_MEMORY_LIMIT = "4g"
-
-# ポートバインディング設定
-# Webサーバーは localhost のみにバインド（セキュリティのため）
-BIND_TO_LOCALHOST_ONLY = True
-
-# PostgreSQL イメージ
+DAG_DIR_LIST_INTERVAL = 10    # DAG ディレクトリの再読み込み間隔（秒）
+SYNC_INTERVAL = 300           # Secret Manager 同期間隔（秒）
+WEBSERVER_TIMEOUT = 300       # Web サーバー起動待機タイムアウト（秒）
+WEBSERVER_CHECK_INTERVAL = 2  # Web サーバー起動確認の間隔（秒）
+DOCKER_MEMORY_LIMIT = "4g"    # コンテナのメモリ制限
+BIND_TO_LOCALHOST_ONLY = True  # True: localhost のみ、False: 外部アクセス可能
 POSTGRES_IMAGE = "postgres:14-alpine"
-
-# =============================================================================
-# Variables 処理設定
-# =============================================================================
-
-# 並列処理のワーカー数（最大）
-MAX_PARALLEL_WORKERS = 10
-
-# Variables 値のマスキング設定
-MASK_PREFIX_LENGTH = 4  # 先頭何文字を表示するか
-MASK_SUFFIX_LENGTH = 4  # 末尾何文字を表示するか
+MAX_PARALLEL_WORKERS = 10     # Secret Manager 同期の並列ワーカー数
+MASK_PREFIX_LENGTH = 4        # ログ出力時のマスキング（先頭表示文字数）
+MASK_SUFFIX_LENGTH = 4        # ログ出力時のマスキング（末尾表示文字数）
+LOG_LEVEL = "INFO"            # ログレベル（DEBUG, INFO, WARNING, ERROR）

@@ -26,14 +26,78 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-from google.auth.exceptions import DefaultCredentialsError
-from google.cloud import secretmanager
+from typing import Any
 
 from composer_local import composer_settings, constants, errors
+from composer_local.utils import require_gcp_secret_manager
 
 LOG = logging.getLogger(__name__)
+
+
+def run_parallel_container_commands(
+    app,
+    commands: dict[str, list[str]],
+    action: str = "処理",
+    max_workers: int | None = None,
+) -> tuple[int, int]:
+    """Docker コンテナ内でコマンドを並列実行する。
+
+    Args:
+        app: Docker container instance
+        commands: {識別ラベル: コマンドリスト}
+        action: ログ出力用のアクション名
+        max_workers: 最大並列数（None の場合は設定値を使用）
+
+    Returns:
+        (成功件数, 失敗件数)
+    """
+    if not commands:
+        return 0, 0
+
+    log_lock = threading.Lock()
+    if max_workers is None:
+        max_workers = min(len(commands), composer_settings.MAX_PARALLEL_WORKERS)
+
+    def _run_single(label: str, cmd: list[str]) -> tuple[str, bool]:
+        try:
+            result = app.exec_run(cmd=cmd)
+            if result.exit_code == 0:
+                with log_lock:
+                    LOG.info(f"{action}完了: {label}")
+                return label, True
+            else:
+                with log_lock:
+                    LOG.warning(f"{action}失敗 {label}: {result.output.decode('utf-8')}")
+                return label, False
+        except Exception as e:
+            with log_lock:
+                LOG.warning(f"{action}失敗 {label}: {e}")
+            return label, False
+
+    LOG.info(f"並列{action}開始: {len(commands)} 件を {max_workers} スレッドで処理")
+    start_time = time.time()
+    success_count = 0
+    failure_count = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_single, label, cmd): label
+            for label, cmd in commands.items()
+        }
+        for future in as_completed(futures):
+            _, success = future.result()
+            if success:
+                success_count += 1
+            else:
+                failure_count += 1
+
+    elapsed = time.time() - start_time
+    LOG.info(f"並列{action}完了: {success_count} 件成功, {failure_count} 件失敗, {elapsed:.2f}秒")
+
+    if failure_count > 0:
+        LOG.warning(f"{failure_count} 件の{action}に失敗しました")
+
+    return success_count, failure_count
 
 
 def mask_value(value: str) -> str:
@@ -81,7 +145,8 @@ def run_command(cmd: list[str]) -> str:
 
 
 def export_variables_via_gcloud(project: str, location: str, env_name: str) -> dict:
-    """Composer 内で `airflow variables export -- /dev/stdout` を実行し、JSON を直接取得（GCS不使用）。"""
+    """Composer 内で `airflow variables export -- /dev/stdout` を実行し、
+    JSON を直接取得（GCS不使用）。"""
     out = run_command(
         [
             "gcloud",
@@ -128,7 +193,7 @@ class SecretManagerSync:
     def __init__(
         self,
         project_id: str,
-        local_env_path: Optional[Path] = None,
+        local_env_path: Path | None = None,
         secret_id: str = composer_settings.SECRET_ID,
     ):
         self.project_id = project_id
@@ -139,6 +204,7 @@ class SecretManagerSync:
     def _get_client(self):
         """Secret Manager クライアントを初期化する。"""
         if self.client is None:
+            secretmanager, DefaultCredentialsError = require_gcp_secret_manager()
             try:
                 self.client = secretmanager.SecretManagerServiceClient()
             except DefaultCredentialsError:
@@ -149,11 +215,11 @@ class SecretManagerSync:
                 raise errors.ComposerCliError(msg)
         return self.client
 
-    def _get_secret_resource_name(self, secret_id: Optional[str] = None) -> str:
+    def _get_secret_resource_name(self, secret_id: str | None = None) -> str:
         sid = secret_id or self.secret_id
         return f"projects/{self.project_id}/secrets/{sid}"
 
-    def get_secret_value(self, secret_id: Optional[str] = None) -> str:
+    def get_secret_value(self, secret_id: str | None = None) -> str:
         """
         指定した Secret の最新バージョンの値を取得する。
 
@@ -174,7 +240,7 @@ class SecretManagerSync:
             LOG.error(f"Secret の取得エラー {sid}: {e}")
             raise errors.ComposerCliError(f"Secret の取得に失敗しました {sid}: {e}")
 
-    def update_secret(self, secret_id: Optional[str], new_value: str) -> None:
+    def update_secret(self, secret_id: str | None, new_value: str) -> None:
         """
         既存の Secret に新しいバージョンを追加する。
 
@@ -199,7 +265,7 @@ class SecretManagerSync:
             LOG.error(f"Secret 更新エラー {sid}: {e}")
             raise errors.ComposerCliError(f"Secret の更新に失敗しました {sid}: {e}")
 
-    def get_all_variables(self) -> Dict[str, str]:
+    def get_all_variables(self) -> dict[str, str]:
         """
         単一 JSON Secret に格納された全 Variables を辞書で返す。
 
@@ -217,8 +283,8 @@ class SecretManagerSync:
             raise
 
     def compare_variables(
-        self, new_variables: Dict[str, str], old_variables: Optional[Dict[str, str]] = None
-    ) -> Dict[str, Any]:
+        self, new_variables: dict[str, str], old_variables: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """
         2つのvariablesを比較し、変更を検出する。
 
@@ -267,7 +333,7 @@ class SecretManagerSync:
             "modified": modified,
         }
 
-    def format_variables_diff(self, changes: Dict[str, Any]) -> str:
+    def format_variables_diff(self, changes: dict[str, Any]) -> str:
         """
         変更内容をdiff形式でフォーマットする。
 
@@ -398,7 +464,17 @@ class SecretManagerSync:
                     LOG.info(f"削除対象のVariables: {len(variable_names)} 件")
 
                     # 並列でVariablesを削除
-                    self._delete_variables_parallel(app, variable_names)
+                    commands = {
+                        name: [
+                            "/home/airflow/run_as_user.sh",
+                            "airflow",
+                            "variables",
+                            "delete",
+                            name,
+                        ]
+                        for name in variable_names
+                    }
+                    run_parallel_container_commands(app, commands, "Variable削除")
 
                 else:
                     LOG.warning(
@@ -411,95 +487,9 @@ class SecretManagerSync:
         except Exception as e:
             LOG.error(f"Airflow Variables削除処理でエラーが発生しました: {e}")
 
-    def _delete_variables_parallel(self, app, variable_names: list) -> None:
-        """
-        並列でVariablesを削除する。
-
-        Args:
-            app: Dockerコンテナインスタンス
-            variable_names: 削除対象の変数名リスト
-        """
-        if not variable_names:
-            return
-
-        # スレッドローカルなロックを作成
-        log_lock = threading.Lock()
-
-        def delete_single_variable(var_name: str) -> tuple[str, bool, str]:
-            """
-            単一のVariableを削除する。
-
-            Args:
-                var_name: 削除対象の変数名
-
-            Returns:
-                tuple: (変数名, 成功フラグ, エラーメッセージ)
-            """
-            try:
-                delete_cmd = [
-                    "/home/airflow/run_as_user.sh",
-                    "airflow",
-                    "variables",
-                    "delete",
-                    var_name,
-                ]
-                delete_result = app.exec_run(cmd=delete_cmd)
-
-                if delete_result.exit_code == 0:
-                    with log_lock:
-                        LOG.info(f"Variable削除完了: {var_name}")
-                    return var_name, True, ""
-                else:
-                    error_msg = delete_result.output.decode('utf-8')
-                    with log_lock:
-                        LOG.warning(f"Variable削除失敗 {var_name}: {error_msg}")
-                    return var_name, False, error_msg
-
-            except Exception as e:
-                with log_lock:
-                    LOG.warning(f"Variable削除失敗 {var_name}: {e}")
-                return var_name, False, str(e)
-
-        # 並列処理でVariablesを削除
-        max_workers = min(len(variable_names), composer_settings.MAX_PARALLEL_WORKERS)
-        LOG.info(
-            f"並列削除開始: {len(variable_names)} 件のVariablesを {max_workers} スレッドで処理"
-        )
-
-        start_time = time.time()
-        success_count = 0
-        failure_count = 0
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # すべてのタスクを送信
-            future_to_var = {
-                executor.submit(delete_single_variable, var_name): var_name
-                for var_name in variable_names
-            }
-
-            # 完了したタスクを処理
-            for future in as_completed(future_to_var):
-                _, success, _ = future.result()
-                if success:
-                    success_count += 1
-                else:
-                    failure_count += 1
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-
-        LOG.info(
-            f"並列削除完了: {success_count} 件成功, {failure_count} 件失敗, "
-            f"処理時間: {elapsed_time:.2f}秒"
-        )
-
-        if failure_count > 0:
-            LOG.warning(f"{failure_count} 件のVariables削除に失敗しました")
-
-
 def create_sync_client(
     project_id: str,
-    local_env_path: Optional[Path] = None,
+    local_env_path: Path | None = None,
 ) -> SecretManagerSync:
     """
     SecretManagerSync クライアントを適切な設定で作成する。

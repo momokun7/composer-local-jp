@@ -1,5 +1,4 @@
 import getpass
-import io
 import json
 import logging
 import os
@@ -7,19 +6,17 @@ import pathlib
 import platform
 import signal
 import sys
-import tarfile
 import time
-import urllib.error
-import urllib.request
 from typing import Dict, List, Optional, Tuple
 
 import docker
-from docker import errors as docker_errors
 
 from composer_local import composer_settings, console, constants, errors, files, utils
+from composer_local.docker_manager import DockerManagerMixin
+from composer_local.health_check import HealthCheckMixin
+from composer_local.initialization import InitializationMixin
 
 LOG = logging.getLogger(__name__)
-DOCKER_FILES = pathlib.Path(__file__).parent / "docker_files"
 
 
 class EnvironmentStatus:
@@ -38,7 +35,7 @@ class EnvironmentConfig:
         self.location = self._get_str("composer_location")
         self.dags_path = self._get_str("dags_path")
         self.dag_dir_list_interval = self._get_int("dag_dir_list_interval", (0,))
-        self.port = port if port is not None else self._get_int("port", (0, 65536))
+        self.port = self._resolve_port(port)
         self.database_engine = self._get_str("database_engine")
 
     def _load(self) -> Dict:
@@ -67,8 +64,22 @@ class EnvironmentConfig:
             raise errors.FailedToParseConfigParamIntRangeError(name, value, allowed_range)
         return value
 
+    def _resolve_port(self, port: Optional[int]) -> int:
+        """ポート番号を解決する。
 
-class Environment:
+        解決順序:
+        1. 引数 port が明示的に指定されていればそれを使う
+        2. config.json に "port" キーがあればそれを使う
+        3. どちらもなければ composer_settings.LOCAL_PORT をデフォルトとして使う
+        """
+        if port is not None:
+            return port
+        if "port" in self.config:
+            return self._get_int("port", (0, 65536))
+        return composer_settings.LOCAL_PORT
+
+
+class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
     def __init__(
         self,
         env_dir_path: pathlib.Path,
@@ -82,6 +93,22 @@ class Environment:
         pypi_packages: Optional[Dict] = None,
         environment_vars: Optional[Dict] = None,
     ):
+        """Environment を初期化する。
+
+        Args:
+            env_dir_path: 環境ディレクトリのパス。
+            project_id: GCP プロジェクト ID。
+            image_version: Composer イメージバージョン文字列。
+            location: GCP リージョン。
+            dags_path: DAG ディレクトリのパス。
+            dag_dir_list_interval: DAG ディレクトリの再読み込み間隔（秒）。
+            database_engine: データベースエンジン種別。
+                ``constants.DatabaseEngine`` enum の値
+                (``"postgresql"`` または ``"sqlite3"``) を文字列で受け取る。
+            port: Airflow Web UI のポート番号。
+            pypi_packages: 追加でインストールする PyPI パッケージの辞書。
+            environment_vars: Airflow に渡す追加の環境変数の辞書。
+        """
         self.name = env_dir_path.name
         self.container_name = f"{constants.CONTAINER_NAME}-{self.name}"
         self.db_container_name = f"{constants.DB_CONTAINER_NAME}-{self.name}"
@@ -133,11 +160,8 @@ class Environment:
         (self.env_dir_path / "config.json").write_text(json.dumps(cfg, indent=4))
 
     def _write_requirements(self):
-        # Include boto3 and other essential packages for DAGs
         essential_packages = {
-            "boto3": ">=1.35.16,<2.0.0",
-            "apache-airflow-providers-amazon": ">=8.28.0,<9.0.0",
-            "apache-airflow-providers-google": "==14.0.0",
+            "apache-airflow-providers-google": "",
         }
         all_packages = {**essential_packages, **self.pypi_packages}
         reqs = "\n".join(sorted(f"{k}{v}" for k, v in all_packages.items()))
@@ -146,6 +170,40 @@ class Environment:
     def _write_variables(self):
         env_vars = "\n".join(sorted(f"# {k}=" for k in self.environment_vars.keys()))
         (self.env_dir_path / "variables.env").write_text(env_vars)
+
+    def _default_airflow_env(self) -> Dict[str, str]:
+        """Return default Airflow environment variables for local development."""
+        return {
+            "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
+            "AIRFLOW__CORE__DAGS_FOLDER": "/home/airflow/gcs/dags",
+            "AIRFLOW__CORE__DATA_FOLDER": "/home/airflow/gcs/data",
+            "AIRFLOW__CORE__LOAD_EXAMPLES": "false",
+            "AIRFLOW__CORE__PLUGINS_FOLDER": "/home/airflow/gcs/plugins",
+            "AIRFLOW_HOME": "/home/airflow/airflow",
+            "AIRFLOW__LOGGING__LOGGING_LEVEL": "INFO",
+            "AIRFLOW__LOGGING__FAB_LOGGING_LEVEL": "WARN",
+            "PYTHONWARNINGS": "ignore::Warning",
+            "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(self.dag_dir_list_interval),
+            "AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR": str(
+                self.image_version.startswith("composer-3")
+            ),
+            "AIRFLOW__WEBSERVER__EXPOSE_CONFIG": "true",
+            "AIRFLOW__WEBSERVER__RELOAD_ON_PLUGIN_CHANGE": "True",
+            "AIRFLOW__WEBSERVER__WEB_SERVER_NAME": "Airflow [LOCAL]",
+            "AIRFLOW__WEBSERVER__BASE_URL": f"http://localhost:{self.port}",
+            "AIRFLOW__WEBSERVER__NAVBAR_COLOR": "#e4007f",
+            "AIRFLOW__WEBSERVER__SHOW_TRIGGER_FORM_IF_NO_PARAMS": "True",
+            "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": (
+                f"postgresql+psycopg2://{composer_settings.POSTGRES_USER}:"
+                f"{composer_settings.POSTGRES_PASSWORD}@{self.db_container_name}:"
+                f"{composer_settings.POSTGRES_PORT}/{composer_settings.POSTGRES_DB}"
+            ),
+            "COMPOSER_IMAGE_VERSION": self.image_version,
+            "COMPOSER_PYTHON_VERSION": composer_settings.COMPOSER_PYTHON_VERSION,
+            "COMPOSER_CONTAINER_RUN_AS_HOST_USER": "False",
+            "COMPOSER_HOST_USER_NAME": f"{getpass.getuser()}",
+            "COMPOSER_HOST_USER_ID": f"{os.getuid() if platform.system() != 'Windows' else ''}",
+        }
 
     def create(self):
         files.create_environment_directories(self.env_dir_path, self.dags_path)
@@ -201,198 +259,10 @@ class Environment:
             database_engine=database_engine,
         )
 
-    # -------- runtime helpers --------
-    def _network(self, create: bool = True):
-        try:
-            return self.docker_client.networks.get(self.docker_network_name)
-        except docker_errors.NotFound:
-            if not create:
-                return None
-            return self.docker_client.networks.create(self.docker_network_name)
-
-    def _ensure_attached(self, network, container):
-        existing = [c.name for c in network.containers]
-        if container.name in existing:
-            return
-        try:
-            network.connect(container)
-        except docker_errors.APIError as err:
-            if "already exists" not in str(err).lower():
-                raise
-
-    def _copy_to_container(self, container, src: pathlib.Path):
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w|") as tar, open(src, "rb") as f:
-            info = tar.gettarinfo(fileobj=f)
-            info.name = src.name
-            tar.addfile(info, f)
-        container.put_archive(constants.AIRFLOW_HOME, stream.getvalue())
-
-    def _mounts(self, include_db: bool):
-        """Create Docker volume mounts for the Airflow container."""
-        m = {
-            # Mount DAGs directory
-            pathlib.Path(self.dags_path): "gcs/dags/",
-            # Mount plugins directory
-            self.env_dir_path / "plugins": "gcs/plugins/",
-            # Mount data directory
-            self.env_dir_path / "data": "gcs/data/",
-            # Mount gcloud config for authentication
-            pathlib.Path(utils.resolve_gcloud_config_path()): ".config/gcloud",
-            # Mount requirements file
-            self.env_dir_path / "requirements.txt": "composer_requirements.txt",
-        }
-        if include_db:
-            (self.env_dir_path / "postgresql_data").mkdir(parents=True, exist_ok=True)
-            m[self.env_dir_path / "postgresql_data"] = "/var/lib/postgresql/data"
-        mounts = []
-        for src, target in m.items():
-            mounts.append(
-                docker.types.Mount(
-                    source=str(src),
-                    target=(
-                        target
-                        if str(target).startswith("/")
-                        else f"{constants.AIRFLOW_HOME}/{target}"
-                    ),
-                    type="bind",
-                )
-            )
-        return mounts
-
-    def _db_env(self) -> Dict[str, str]:
-        return {
-            "PGDATA": "/var/lib/postgresql/data/pgdata",
-            "POSTGRES_USER": composer_settings.POSTGRES_USER,
-            "POSTGRES_PASSWORD": composer_settings.POSTGRES_PASSWORD,
-            "POSTGRES_DB": composer_settings.POSTGRES_DB,
-        }
-
-    def _default_airflow_env(self) -> Dict[str, str]:
-        """Return default Airflow environment variables for local development."""
-        return {
-            # Core Airflow settings
-            "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
-            "AIRFLOW__CORE__DAGS_FOLDER": "/home/airflow/gcs/dags",
-            "AIRFLOW__CORE__DATA_FOLDER": "/home/airflow/gcs/data",
-            "AIRFLOW__CORE__LOAD_EXAMPLES": "false",
-            "AIRFLOW__CORE__PLUGINS_FOLDER": "/home/airflow/gcs/plugins",
-            "AIRFLOW_HOME": "/home/airflow/airflow",
-            # Logging settings
-            "AIRFLOW__LOGGING__LOGGING_LEVEL": "INFO",
-            "AIRFLOW__LOGGING__FAB_LOGGING_LEVEL": "WARN",
-            # Suppress cryptography warnings
-            "PYTHONWARNINGS": "ignore::Warning",
-            # Scheduler settings
-            "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(self.dag_dir_list_interval),
-            "AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR": str(
-                self.image_version.startswith("composer-3")
-            ),
-            # Webserver settings
-            "AIRFLOW__WEBSERVER__EXPOSE_CONFIG": "true",
-            "AIRFLOW__WEBSERVER__RELOAD_ON_PLUGIN_CHANGE": "True",
-            "AIRFLOW__WEBSERVER__WEB_SERVER_NAME": "Airflow [LOCAL]",
-            "AIRFLOW__WEBSERVER__BASE_URL": f"http://localhost:{self.port}",
-            "AIRFLOW__WEBSERVER__NAVBAR_COLOR": "#e4007f",
-            "AIRFLOW__WEBSERVER__SHOW_TRIGGER_FORM_IF_NO_PARAMS": "True",
-            # Database connection
-            "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": (
-                f"postgresql+psycopg2://{composer_settings.POSTGRES_USER}:"
-                f"{composer_settings.POSTGRES_PASSWORD}@{self.db_container_name}:"
-                f"{composer_settings.POSTGRES_PORT}/{composer_settings.POSTGRES_DB}"
-            ),
-            # Composer settings
-            "COMPOSER_IMAGE_VERSION": self.image_version,
-            "COMPOSER_PYTHON_VERSION": composer_settings.COMPOSER_PYTHON_VERSION,
-            "COMPOSER_CONTAINER_RUN_AS_HOST_USER": "False",
-            "COMPOSER_HOST_USER_NAME": f"{getpass.getuser()}",
-            "COMPOSER_HOST_USER_ID": f"{os.getuid() if platform.system() != 'Windows' else ''}",
-        }
-
-    def _get_container(
-        self, name: str, assert_running: bool = False, ignore_not_found: bool = False
-    ):
-        try:
-            c = self.docker_client.containers.get(name)
-            if assert_running and c.status != constants.ContainerStatus.RUNNING:
-                raise errors.EnvironmentNotRunningError()
-            return c
-        except docker_errors.NotFound:
-            if ignore_not_found:
-                return None
-            raise errors.EnvironmentNotFoundError()
-
-    def _create_db(self):
-        self.docker_client.images.pull(composer_settings.POSTGRES_IMAGE)
-        return self.docker_client.containers.create(
-            image=composer_settings.POSTGRES_IMAGE,
-            name=self.db_container_name,
-            environment=self._db_env(),
-            mounts=self._mounts(include_db=True),
-            ports={
-                f"{composer_settings.POSTGRES_PORT}/tcp": str(composer_settings.POSTGRES_LOCAL_PORT)
-            },
-            mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
-            detach=True,
-        )
-
-    def _create_app(self):
-        image_tag = self._image_tag()
-        try:
-            self.docker_client.images.pull(image_tag)
-        except (docker_errors.ImageNotFound, docker_errors.APIError):
-            raise errors.ImageNotFoundError(self.image_version)
-        env_vars = {**self._default_airflow_env(), **(self.environment_vars or {})}
-        entrypoint = f"sh {constants.ENTRYPOINT_PATH}"
-        c = self.docker_client.containers.create(
-            image=image_tag,
-            name=self.container_name,
-            entrypoint=entrypoint,
-            environment=env_vars,
-            mounts=self._mounts(include_db=False),
-            # Bind webserver to localhost only for security
-            ports={
-                "8080/tcp": (
-                    "127.0.0.1" if composer_settings.BIND_TO_LOCALHOST_ONLY else "0.0.0.0",
-                    self.port,
-                )
-            },
-            mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
-            detach=True,
-        )
-        self._copy_to_container(c, DOCKER_FILES / "entrypoint.sh")
-        self._copy_to_container(c, DOCKER_FILES / "run_as_user.sh")
-        return c
-
     def start(self):
-        self._assert_options()
-        files.assert_dag_path_exists(self.dags_path)
-        net = self._network(create=True)
-        db = self._get_container(self.db_container_name, ignore_not_found=True) or self._create_db()
-        if db.status != constants.ContainerStatus.RUNNING:
-            db.start()
-        self._ensure_attached(net, db)
-        app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
-        if app.status != constants.ContainerStatus.RUNNING:
-            app.start()
-        self._ensure_attached(net, app)
-        # Auto-import Variables from variables.json if present
-        variables_json_path = self.env_dir_path / "data" / "variables.json"
-        if variables_json_path.is_file():
-            self.run_airflow_command(
-                [
-                    "variables",
-                    "import",
-                    "/home/airflow/gcs/data/variables.json",
-                ]
-            )
-            # Remove temporary variables file after successful import
-            try:
-                variables_json_path.unlink()
-            except Exception:
-                pass
+        """既存環境をバックグラウンドで起動（再起動用）。"""
+        self._ensure_containers_running()
 
-        # Wait until webserver is reachable before printing the link
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
@@ -401,142 +271,71 @@ class Environment:
         print(f"{self.name} 環境を起動しました。")
 
     def start_foreground(self):
-        """Start the environment in foreground mode, attaching to container logs."""
+        """環境をフォアグラウンドモードで起動し、コンテナログにアタッチする。"""
         import atexit
 
-        self._assert_options()
-        files.assert_dag_path_exists(self.dags_path)
-        net = self._network(create=True)
+        db, app = self._ensure_containers_running()
 
-        # Start database container in background
-        db = self._get_container(self.db_container_name, ignore_not_found=True) or self._create_db()
-        if db.status != constants.ContainerStatus.RUNNING:
-            db.start()
-        self._ensure_attached(net, db)
-
-        # Start application container in background first
-        app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
-        if app.status != constants.ContainerStatus.RUNNING:
-            app.start()
-        self._ensure_attached(net, app)
-
-        # Auto-import Variables from variables.json if present
-        variables_json_path = self.env_dir_path / "data" / "variables.json"
-        if variables_json_path.is_file():
-            self.run_airflow_command(
-                [
-                    "variables",
-                    "import",
-                    "/home/airflow/gcs/data/variables.json",
-                ]
-            )
-            # Remove temporary variables file after successful import
-            try:
-                variables_json_path.unlink()
-            except Exception:
-                pass
-
-        # Wait until webserver is reachable before printing the link
         self._wait_until_webserver_ready(
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
 
-        print(f"{self.name} 環境を起動しました。")
-        print(f"Airflow Web UI: http://localhost:{self.port}")
+        self._auto_import_variables()
+
+        self._handle_first_time_init()
+
         print("Ctrl+C で停止します...")
 
-        # Set up signal handlers to ensure containers are stopped
-        def signal_handler(signum, frame):
+        stopped = False
+        def stop_containers():
+            nonlocal stopped
+            if stopped:
+                return
+            stopped = True
             print(f"\n{self.name} 環境を停止しています...")
             try:
-                app.stop()
-                db.stop()
-            except Exception:
-                pass
+                app.stop(timeout=30)
+                db.stop(timeout=30)
+            except Exception as e:
+                LOG.warning(f"コンテナ停止中にエラー: {e}")
             print(f"{self.name} 環境が停止しました。")
-            sys.exit(0)
 
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGHUP, signal_handler)
-
-        # Set up atexit handler to ensure containers are stopped when process exits
-        def cleanup_containers():
-            try:
-                app.stop()
-                db.stop()
-            except Exception:
-                pass
-
-        atexit.register(cleanup_containers)
+        signal.signal(signal.SIGINT, lambda *_: (stop_containers(), sys.exit(0)))
+        signal.signal(signal.SIGTERM, lambda *_: (stop_containers(), sys.exit(0)))
+        signal.signal(signal.SIGHUP, lambda *_: (stop_containers(), sys.exit(0)))
+        atexit.register(stop_containers)
 
         try:
-            # Attach to the application container logs in foreground
-            for log_line in app.logs(stream=True, follow=True):
-                print(log_line.decode('utf-8').rstrip())
+            now = int(time.time())
+            for log_line in app.logs(stream=True, follow=True, since=now):
+                line = log_line.decode('utf-8').rstrip()
+                if not line:
+                    continue
+                line_upper = line.upper()
+                if any(p in line_upper for p in (' ERROR ', '[ERROR]', ' WARNING ', '[WARNING]')):
+                    print(line)
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
-            # Handle Ctrl+C, terminal close, or broken pipe
-            print(f"\n{self.name} 環境を停止しています...")
-            try:
-                app.stop()
-                db.stop()
-            except Exception:
-                pass
-            print(f"{self.name} 環境が停止しました。")
+            stop_containers()
 
-    def _wait_until_webserver_ready(self, timeout_seconds: int, interval_seconds: int) -> None:
-        url = f"http://localhost:{self.port}"
-        start_time = time.time()
+    def resume_env(self):
+        """停止中の環境を再開する。"""
+        self._ensure_containers_running()
 
-        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+        self._wait_until_webserver_ready(
+            timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
+            interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
+        )
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[blue]Airflow Web サーバーを起動中..."),
-            TimeElapsedColumn(),
-            console=console.get_console(),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Web サーバーの起動を待機中", total=None)
-
-            while True:
-                try:
-                    with urllib.request.urlopen(url, timeout=5) as resp:
-                        status = resp.getcode()
-                        # 200 or 302 (redirect to /home) are both acceptable
-                        if status in (200, 302):
-                            progress.update(task, description="[green]Web サーバーが起動しました！")
-                            return
-                except (
-                    urllib.error.URLError,
-                    urllib.error.HTTPError,
-                    TimeoutError,
-                    ConnectionResetError,
-                    OSError,
-                ):
-                    pass
-
-                elapsed = time.time() - start_time
-                if elapsed >= timeout_seconds:
-                    progress.update(
-                        task, description="[red]タイムアウト内に Web サーバーが起動しませんでした"
-                    )
-                    console.get_console().print(
-                        "\n[red]指定したタイムアウト内に Web サーバーが起動しませんでした。\n"
-                        "ログを確認してから、もう一度お試しください。"
-                    )
-                    return
-                time.sleep(interval_seconds)
+        self._handle_first_time_init()
 
     def stop(self):
-        db = self._get_container(self.db_container_name, ignore_not_found=True)
-        if db:
-            db.stop()
         app = self._get_container(self.container_name, ignore_not_found=True)
         if app:
-            app.stop()
-        # 停止メッセージは非表示
+            app.stop(timeout=30)
+        db = self._get_container(self.db_container_name, ignore_not_found=True)
+        if db:
+            db.stop(timeout=30)
 
     def restart(self):
         self.stop()
@@ -556,32 +355,18 @@ class Environment:
             for line in stream.decode("utf-8").split("\n"):
                 console.get_console().print(line)
 
-    def run_airflow_command(self, command: List) -> None:
+    def run_airflow_command(self, command: List, quiet: bool = False) -> None:
         app = self._get_container(self.container_name, assert_running=True)
         cmd = ["/home/airflow/run_as_user.sh", "airflow", *command]
         result = app.exec_run(cmd=cmd)
 
-        # 不要なログメッセージをフィルタリング
+        if quiet:
+            return
+
         output = result.output.decode()
         filtered_lines = []
         for line in output.split('\n'):
-            # 特定の警告や情報メッセージを除外
-            if any(
-                skip_phrase in line
-                for skip_phrase in [
-                    "WARNING - empty cryptography key",
-                    "Optional provider feature disabled",
-                    "providers_manager.py",
-                    "crypto.py",
-                    "exec airflow variables import",
-                    "variables successfully updated",
-                    "Airflow Variables のインポートが完了しました",
-                    "+ [ False = True ]",
-                    "+ [",
-                    "= True ]",
-                    "= False ]",
-                ]
-            ):
+            if any(phrase in line for phrase in constants.AIRFLOW_LOG_SKIP_PHRASES):
                 continue
             filtered_lines.append(line)
 
@@ -597,9 +382,14 @@ class Environment:
             else ""
         )
         env_status_colored = utils.wrap_status_in_color(env_status)
-        auth_info = utils.get_auth_info()
 
-        # 動的レイアウトを使用
+        try:
+            auth_info = utils.get_auth_info()
+            gcloud_path = utils.resolve_gcloud_config_path()
+        except (errors.ComposerCliError, Exception):
+            auth_info = {"description": "ローカル専用モード（GCP 未設定）"}
+            gcloud_path = ""
+
         msg = utils.create_plain_status_text(
             name=self.name,
             state=env_status_colored,
@@ -607,7 +397,7 @@ class Environment:
             image_version=self.image_version,
             dags_path=str(self.dags_path),
             auth_description=auth_info["description"],
-            gcloud_path=utils.resolve_gcloud_config_path(),
+            gcloud_path=gcloud_path,
         )
         console.get_console().print(f"\n{msg}\n{constants.FINAL_ENV_MESSAGE}")
 
@@ -618,7 +408,7 @@ class Environment:
                 if c.status == constants.ContainerStatus.RUNNING:
                     if not force:
                         raise force_error
-                    c.stop()
+                    c.stop(timeout=30)
                 c.remove()
         net = self._network(create=False)
         if net:

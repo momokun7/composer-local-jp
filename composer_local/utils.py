@@ -7,7 +7,6 @@ import subprocess
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
-import click
 import rich.box
 import rich.table
 from rich.logging import RichHandler
@@ -73,10 +72,6 @@ def resolve_gcloud_config_path() -> str:
     raise errors.ComposerCliError(constants.GCLOUD_CONFIG_NOT_FOUND_ERROR)
 
 
-def resolve_kube_config_path() -> Optional[str]:
-    return os.environ.get(constants.KUBECONFIG_PATH_ENV)
-
-
 def create_plain_status_text(
     name: str,
     state: str,
@@ -134,11 +129,14 @@ def create_plain_status_text(
     add_item("DAG ディレクトリ", dags_path)
 
     # 認証情報の有効性をチェックして表示
-    auth_check = check_auth_validity()
-    if auth_check["is_valid"]:
-        auth_status = wrap_auth_status_in_color(auth_description, True)
-    else:
-        auth_status = wrap_auth_status_in_color(auth_check['error_message'], False)
+    try:
+        auth_check = check_auth_validity()
+        if auth_check["is_valid"]:
+            auth_status = wrap_auth_status_in_color(auth_description, True)
+        else:
+            auth_status = wrap_auth_status_in_color(auth_check['error_message'], False)
+    except Exception:
+        auth_status = auth_description
 
     add_item("認証情報", auth_status)
     add_item("設定パス", gcloud_path)
@@ -197,142 +195,85 @@ def get_auth_info() -> Dict[str, str]:
         return {"type": "unknown", "account": "不明", "description": "認証情報の取得に失敗しました"}
 
 
+def _auth_result(
+    auth_info: Dict[str, str],
+    error_message: Optional[str] = None,
+    suggestions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """check_auth_validity の戻り値を組み立てるヘルパー"""
+    if error_message is None:
+        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
+    default_suggestions = [
+        "make auth-user を実行してユーザー認証を更新してください",
+        "make auth-sa を実行してサービスアカウント認証を更新してください",
+    ]
+    return {
+        "is_valid": False,
+        "auth_info": auth_info,
+        "error_message": error_message,
+        "suggestions": suggestions or default_suggestions,
+    }
+
+
+def _error_msg_for_returncode(returncode: int) -> str:
+    """returncode に応じた認証エラーメッセージを返す"""
+    if returncode == 1:
+        return "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
+    if returncode == 2:
+        return "gcloudコマンドの実行に失敗しました"
+    return f"認証の検証中にエラーが発生しました（終了コード: {returncode}）"
+
+
 def check_auth_validity() -> Dict[str, Any]:
-    """
-    現在の認証情報の有効性をチェックする
+    """現在の認証情報の有効性をチェックする。
 
     Returns:
-        Dict[str, Any]: 認証情報の状態と詳細情報
-        - is_valid: bool - 認証情報が有効かどうか
-        - auth_info: Dict[str, str] - 認証情報の詳細
-        - error_message: str - エラーメッセージ（無効な場合）
-        - suggestions: List[str] - 対処法の提案
+        Dict[str, Any]: ``is_valid``, ``auth_info``, ``error_message``,
+        ``suggestions`` をキーに持つ辞書。
     """
     auth_info = get_auth_info()
 
-    # 認証情報が取得できない場合
     if auth_info.get("type") == "unknown":
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": "認証情報が見つかりません",
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を行ってください",
-                "make auth-sa を実行してサービスアカウント認証を行ってください",
-            ],
-        }
+        return _auth_result(auth_info, "認証情報が見つかりません")
 
     try:
-        # 現在のプロジェクトを取得して認証の有効性をテスト
-        project_output = subprocess.run(
+        project = subprocess.run(
             [gcloud_cmd(), "config", "get-value", "project"],
-            check=True,
-            capture_output=True,
-            text=True,
+            check=True, capture_output=True, text=True,
         ).stdout.strip()
 
-        if not project_output:
-            return {
-                "is_valid": False,
-                "auth_info": auth_info,
-                "error_message": "プロジェクトが設定されていません",
-                "suggestions": [
-                    "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
-                    "make auth-user を実行して認証を行ってください",
-                ],
-            }
+        if not project:
+            return _auth_result(auth_info, "プロジェクトが設定されていません", [
+                "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
+                "make auth-user を実行して認証を行ってください",
+            ])
 
-        # 認証トークンの有効性をテスト（簡単なAPI呼び出し）
-        try:
-            subprocess.run(
-                [gcloud_cmd(), "auth", "print-access-token"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            # より詳細なエラーメッセージを生成
-            if e.returncode == 1:
-                error_msg = "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
-            elif e.returncode == 2:
-                error_msg = "gcloudコマンドの実行に失敗しました"
-            else:
-                error_msg = f"認証の検証中にエラーが発生しました（終了コード: {e.returncode}）"
+        subprocess.run(
+            [gcloud_cmd(), "auth", "print-access-token"],
+            check=True, capture_output=True, text=True,
+        )
 
-            return {
-                "is_valid": False,
-                "auth_info": auth_info,
-                "error_message": error_msg,
-                "suggestions": [
-                    "make auth-user を実行してユーザー認証を更新してください",
-                    "make auth-sa を実行してサービスアカウント認証を更新してください",
-                ],
-            }
-
-        # サービスアカウントの権限借用の場合、追加のチェック
         if auth_info.get("type") == "service_account":
-            try:
-                # サービスアカウントの権限をテスト
-                account_name = auth_info.get("account", "")
-                subprocess.run(
-                    [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy", account_name],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            except subprocess.CalledProcessError:
-                return {
-                    "is_valid": False,
-                    "auth_info": auth_info,
-                    "error_message": "サービスアカウントの権限が不足しています",
-                    "suggestions": [
-                        "make auth-sa を実行してサービスアカウント認証を更新してください",
-                        "サービスアカウントに必要な権限があることを確認してください",
-                    ],
-                }
+            subprocess.run(
+                [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy",
+                 auth_info.get("account", "")],
+                check=True, capture_output=True, text=True,
+            )
 
-        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
+        return _auth_result(auth_info)
 
     except subprocess.CalledProcessError as e:
-        # より具体的なエラーメッセージを生成
-        if "auth" in str(e.cmd) and e.returncode == 1:
-            error_msg = "gcloud認証コマンドの実行に失敗しました（認証情報が無効または期限切れ）"
-        elif "config" in str(e.cmd) and e.returncode == 1:
-            error_msg = (
-                "gcloud設定の取得に失敗しました（プロジェクトが設定されていない可能性があります）"
-            )
-        else:
-            error_msg = f"gcloudコマンドの実行に失敗しました（終了コード: {e.returncode}）"
-
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": error_msg,
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を更新してください",
-                "make auth-sa を実行してサービスアカウント認証を更新してください",
-            ],
-        }
+        return _auth_result(auth_info, _error_msg_for_returncode(e.returncode))
     except FileNotFoundError:
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": "gcloudコマンドが見つかりません（Google Cloud SDKがインストールされていない可能性があります）",
-            "suggestions": [
-                "Google Cloud SDKをインストールしてください",
-                "https://cloud.google.com/sdk/docs/install を参照してください",
-            ],
-        }
+        return _auth_result(
+            auth_info,
+            "gcloudコマンドが見つかりません"
+            "（Google Cloud SDKがインストールされていない可能性があります）",
+            ["Google Cloud SDKをインストールしてください",
+             "https://cloud.google.com/sdk/docs/install を参照してください"],
+        )
     except Exception as e:
-        return {
-            "is_valid": False,
-            "auth_info": auth_info,
-            "error_message": f"予期しないエラーが発生しました: {str(e)}",
-            "suggestions": [
-                "make auth-user を実行してユーザー認証を更新してください",
-                "make auth-sa を実行してサービスアカウント認証を更新してください",
-            ],
-        }
+        return _auth_result(auth_info, f"予期しないエラーが発生しました: {e}")
 
 
 def assert_environment_name_is_valid(env_name: str):
@@ -417,13 +358,48 @@ def setup_logging(verbose: bool, debug: bool):
 def resolve_project_id(project_id: Optional[str]) -> str:
     if project_id is not None:
         return project_id
-    LOG.info("プロジェクト ID が指定されていないため、Cloud CLI から取得します。")
+    return "local-dev"
+
+
+# ---------------------------------------------------------------------------
+# GCP パッケージの遅延インポートヘルパー
+# ---------------------------------------------------------------------------
+
+_GCP_INSTALL_HINT = (
+    "GCP 連携機能には追加パッケージが必要です。\n"
+    "  uv sync --extra gcp\n"
+    "を実行してください。"
+)
+
+
+def require_gcp_secret_manager():
+    """google-cloud-secret-manager パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        tuple: (secretmanager モジュール, DefaultCredentialsError 例外クラス)
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
     try:
-        return get_project_id()
-    except errors.ComposerCliError as err:
-        msg = (
-            "Google Cloud のプロジェクト ID を指定してください（'-p' / '--project'）。\n"
-            "gcloud の設定から project id を取得できませんでした:\n"
-            f"{err}"
-        )
-        raise click.UsageError(msg)
+        from google.auth.exceptions import DefaultCredentialsError
+        from google.cloud import secretmanager
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return secretmanager, DefaultCredentialsError
+
+
+def require_gcp_composer():
+    """google-cloud-orchestration-airflow パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        service_v1 モジュール
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
+    try:
+        from google.cloud.orchestration.airflow import service_v1
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return service_v1
