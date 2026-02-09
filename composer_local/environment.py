@@ -1,5 +1,4 @@
 import getpass
-import io
 import json
 import logging
 import os
@@ -7,26 +6,17 @@ import pathlib
 import platform
 import signal
 import sys
-import tarfile
 import time
-import urllib.error
-import urllib.request
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import docker
-from docker import errors as docker_errors
 
 from composer_local import composer_settings, console, constants, errors, files, utils
+from composer_local.docker_manager import DockerManagerMixin
+from composer_local.health_check import HealthCheckMixin
+from composer_local.initialization import InitializationMixin
 
 LOG = logging.getLogger(__name__)
-DOCKER_FILES = pathlib.Path(__file__).parent / "docker_files"
-
-# コンテナにコピーするファイル一覧
-CONTAINER_COPY_FILES: List[pathlib.Path] = [
-    DOCKER_FILES / "entrypoint.sh",
-    DOCKER_FILES / "run_as_user.sh",
-    DOCKER_FILES / "webserver_config.py",
-]
 
 
 class EnvironmentStatus:
@@ -89,7 +79,7 @@ class EnvironmentConfig:
         return composer_settings.LOCAL_PORT
 
 
-class Environment:
+class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
     def __init__(
         self,
         env_dir_path: pathlib.Path,
@@ -181,6 +171,40 @@ class Environment:
         env_vars = "\n".join(sorted(f"# {k}=" for k in self.environment_vars.keys()))
         (self.env_dir_path / "variables.env").write_text(env_vars)
 
+    def _default_airflow_env(self) -> Dict[str, str]:
+        """Return default Airflow environment variables for local development."""
+        return {
+            "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
+            "AIRFLOW__CORE__DAGS_FOLDER": "/home/airflow/gcs/dags",
+            "AIRFLOW__CORE__DATA_FOLDER": "/home/airflow/gcs/data",
+            "AIRFLOW__CORE__LOAD_EXAMPLES": "false",
+            "AIRFLOW__CORE__PLUGINS_FOLDER": "/home/airflow/gcs/plugins",
+            "AIRFLOW_HOME": "/home/airflow/airflow",
+            "AIRFLOW__LOGGING__LOGGING_LEVEL": "INFO",
+            "AIRFLOW__LOGGING__FAB_LOGGING_LEVEL": "WARN",
+            "PYTHONWARNINGS": "ignore::Warning",
+            "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(self.dag_dir_list_interval),
+            "AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR": str(
+                self.image_version.startswith("composer-3")
+            ),
+            "AIRFLOW__WEBSERVER__EXPOSE_CONFIG": "true",
+            "AIRFLOW__WEBSERVER__RELOAD_ON_PLUGIN_CHANGE": "True",
+            "AIRFLOW__WEBSERVER__WEB_SERVER_NAME": "Airflow [LOCAL]",
+            "AIRFLOW__WEBSERVER__BASE_URL": f"http://localhost:{self.port}",
+            "AIRFLOW__WEBSERVER__NAVBAR_COLOR": "#e4007f",
+            "AIRFLOW__WEBSERVER__SHOW_TRIGGER_FORM_IF_NO_PARAMS": "True",
+            "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": (
+                f"postgresql+psycopg2://{composer_settings.POSTGRES_USER}:"
+                f"{composer_settings.POSTGRES_PASSWORD}@{self.db_container_name}:"
+                f"{composer_settings.POSTGRES_PORT}/{composer_settings.POSTGRES_DB}"
+            ),
+            "COMPOSER_IMAGE_VERSION": self.image_version,
+            "COMPOSER_PYTHON_VERSION": composer_settings.COMPOSER_PYTHON_VERSION,
+            "COMPOSER_CONTAINER_RUN_AS_HOST_USER": "False",
+            "COMPOSER_HOST_USER_NAME": f"{getpass.getuser()}",
+            "COMPOSER_HOST_USER_ID": f"{os.getuid() if platform.system() != 'Windows' else ''}",
+        }
+
     def create(self):
         files.create_environment_directories(self.env_dir_path, self.dags_path)
         self._assert_options()
@@ -235,331 +259,6 @@ class Environment:
             database_engine=database_engine,
         )
 
-    def _network(self, create: bool = True):
-        try:
-            return self.docker_client.networks.get(self.docker_network_name)
-        except docker_errors.NotFound:
-            if not create:
-                return None
-            return self.docker_client.networks.create(self.docker_network_name)
-
-    def _ensure_attached(self, network, container):
-        existing = [c.name for c in network.containers]
-        if container.name in existing:
-            return
-        try:
-            network.connect(container)
-        except docker_errors.APIError as err:
-            if "already exists" not in str(err).lower():
-                raise
-
-    def _copy_to_container(self, container, src: pathlib.Path):
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w|") as tar, open(src, "rb") as f:
-            info = tar.gettarinfo(fileobj=f)
-            info.name = src.name
-            tar.addfile(info, f)
-        container.put_archive(constants.AIRFLOW_HOME, stream.getvalue())
-
-    def _copy_files_to_container(self, container) -> None:
-        """CONTAINER_COPY_FILES に定義されたファイルをコンテナへコピーする。"""
-        for src in CONTAINER_COPY_FILES:
-            self._copy_to_container(container, src)
-
-    def _warn_if_port_exposed(self, service_label: str) -> None:
-        """BIND_TO_LOCALHOST_ONLY が False の場合にセキュリティ警告をログ出力する。
-
-        Args:
-            service_label: 警告メッセージに含めるサービス名（例: "PostgreSQL ポート"）。
-        """
-        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
-            LOG.warning(
-                "BIND_TO_LOCALHOST_ONLY が False に設定されています。"
-                f" {service_label}が外部ネットワークに公開されます。"
-                " セキュリティリスクを理解した上で使用してください。"
-            )
-
-    def _poll_until_ready(
-        self,
-        check_fn: Callable[[], bool],
-        timeout_seconds: int,
-        interval_seconds: int,
-        label: str,
-        timeout_message: str,
-    ) -> None:
-        """check_fn が True を返すまでポーリングする汎用ヘルパー。
-
-        Args:
-            check_fn: 準備完了時に True を返すコールバック。
-            timeout_seconds: タイムアウトまでの秒数。
-            interval_seconds: ポーリング間隔（秒）。
-            label: 待機中に表示するラベル文字列。
-            timeout_message: タイムアウト時に ComposerCliError に渡すメッセージ。
-        """
-        start_time = time.time()
-        print(f"{label}", end="", flush=True)
-        while True:
-            if check_fn():
-                print(" 起動完了")
-                return
-            elapsed = time.time() - start_time
-            if elapsed >= timeout_seconds:
-                print(" タイムアウト")
-                raise errors.ComposerCliError(timeout_message)
-            print(".", end="", flush=True)
-            time.sleep(interval_seconds)
-
-    def _mounts(self, include_db: bool):
-        """Create Docker volume mounts for the Airflow container."""
-        m = {
-            pathlib.Path(self.dags_path): "gcs/dags/",
-            self.env_dir_path / "plugins": "gcs/plugins/",
-            self.env_dir_path / "data": "gcs/data/",
-            self.env_dir_path / "requirements.txt": "composer_requirements.txt",
-        }
-        try:
-            gcloud_path = pathlib.Path(utils.resolve_gcloud_config_path())
-            if gcloud_path.is_dir():
-                m[gcloud_path] = ".config/gcloud"
-        except errors.ComposerCliError:
-            LOG.debug("gcloud config not found; skipping mount (local-only mode)")
-        if include_db:
-            try:
-                (self.env_dir_path / "postgresql_data").mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                raise errors.ComposerCliError(f"PostgreSQL データディレクトリの作成に失敗: {e}")
-            m[self.env_dir_path / "postgresql_data"] = "/var/lib/postgresql/data"
-        mounts = []
-        for src, target in m.items():
-            mounts.append(
-                docker.types.Mount(
-                    source=str(src),
-                    target=(
-                        target
-                        if str(target).startswith("/")
-                        else f"{constants.AIRFLOW_HOME}/{target}"
-                    ),
-                    type="bind",
-                )
-            )
-        return mounts
-
-    def _db_env(self) -> Dict[str, str]:
-        return {
-            "PGDATA": "/var/lib/postgresql/data/pgdata",
-            "POSTGRES_USER": composer_settings.POSTGRES_USER,
-            "POSTGRES_PASSWORD": composer_settings.POSTGRES_PASSWORD,
-            "POSTGRES_DB": composer_settings.POSTGRES_DB,
-        }
-
-    def _default_airflow_env(self) -> Dict[str, str]:
-        """Return default Airflow environment variables for local development."""
-        return {
-            "AIRFLOW__API__AUTH_BACKEND": "airflow.api.auth.backend.default",
-            "AIRFLOW__CORE__DAGS_FOLDER": "/home/airflow/gcs/dags",
-            "AIRFLOW__CORE__DATA_FOLDER": "/home/airflow/gcs/data",
-            "AIRFLOW__CORE__LOAD_EXAMPLES": "false",
-            "AIRFLOW__CORE__PLUGINS_FOLDER": "/home/airflow/gcs/plugins",
-            "AIRFLOW_HOME": "/home/airflow/airflow",
-            "AIRFLOW__LOGGING__LOGGING_LEVEL": "INFO",
-            "AIRFLOW__LOGGING__FAB_LOGGING_LEVEL": "WARN",
-            "PYTHONWARNINGS": "ignore::Warning",
-            "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(self.dag_dir_list_interval),
-            "AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR": str(
-                self.image_version.startswith("composer-3")
-            ),
-            "AIRFLOW__WEBSERVER__EXPOSE_CONFIG": "true",
-            "AIRFLOW__WEBSERVER__RELOAD_ON_PLUGIN_CHANGE": "True",
-            "AIRFLOW__WEBSERVER__WEB_SERVER_NAME": "Airflow [LOCAL]",
-            "AIRFLOW__WEBSERVER__BASE_URL": f"http://localhost:{self.port}",
-            "AIRFLOW__WEBSERVER__NAVBAR_COLOR": "#e4007f",
-            "AIRFLOW__WEBSERVER__SHOW_TRIGGER_FORM_IF_NO_PARAMS": "True",
-            "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN": (
-                f"postgresql+psycopg2://{composer_settings.POSTGRES_USER}:"
-                f"{composer_settings.POSTGRES_PASSWORD}@{self.db_container_name}:"
-                f"{composer_settings.POSTGRES_PORT}/{composer_settings.POSTGRES_DB}"
-            ),
-            "COMPOSER_IMAGE_VERSION": self.image_version,
-            "COMPOSER_PYTHON_VERSION": composer_settings.COMPOSER_PYTHON_VERSION,
-            "COMPOSER_CONTAINER_RUN_AS_HOST_USER": "False",
-            "COMPOSER_HOST_USER_NAME": f"{getpass.getuser()}",
-            "COMPOSER_HOST_USER_ID": f"{os.getuid() if platform.system() != 'Windows' else ''}",
-        }
-
-    def _get_container(
-        self, name: str, assert_running: bool = False, ignore_not_found: bool = False
-    ):
-        try:
-            c = self.docker_client.containers.get(name)
-            if assert_running and c.status != constants.ContainerStatus.RUNNING:
-                raise errors.EnvironmentNotRunningError()
-            return c
-        except docker_errors.NotFound:
-            if ignore_not_found:
-                return None
-            raise errors.EnvironmentNotFoundError()
-
-    def _create_db(self):
-        self._warn_if_port_exposed("PostgreSQL ポート")
-        self.docker_client.images.pull(composer_settings.POSTGRES_IMAGE)
-        return self.docker_client.containers.create(
-            image=composer_settings.POSTGRES_IMAGE,
-            name=self.db_container_name,
-            environment=self._db_env(),
-            mounts=self._mounts(include_db=True),
-            ports={
-                f"{composer_settings.POSTGRES_PORT}/tcp": (
-                    "127.0.0.1" if composer_settings.BIND_TO_LOCALHOST_ONLY else "0.0.0.0",
-                    composer_settings.POSTGRES_LOCAL_PORT,
-                )
-            },
-            healthcheck={
-                "Test": [
-                    "CMD-SHELL",
-                    f"pg_isready -U {composer_settings.POSTGRES_USER} "
-                    f"-d {composer_settings.POSTGRES_DB}",
-                ],
-                "Interval": constants.HEALTHCHECK_INTERVAL_NS,
-                "Timeout": constants.HEALTHCHECK_TIMEOUT_NS,
-                "Retries": constants.HEALTHCHECK_RETRIES,
-                "StartPeriod": constants.HEALTHCHECK_START_PERIOD_DB_NS,
-            },
-            mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
-            detach=True,
-        )
-
-    def _create_app(self):
-        self._warn_if_port_exposed("Airflow Web サーバーのポート")
-        if not composer_settings.BIND_TO_LOCALHOST_ONLY:
-            # webserver_config.py で AUTH_ROLE_PUBLIC=Admin が設定されているため、
-            # ポート公開時は認証なしで管理者権限のアクセスが可能になる
-            LOG.warning(
-                "AUTH_ROLE_PUBLIC が Admin に設定された状態でポートが外部に公開されます。"
-                " 認証なしで管理者権限のアクセスが可能です。"
-                " 信頼できないネットワークでの使用は避けてください。"
-            )
-        image_tag = self._image_tag()
-        try:
-            self.docker_client.images.pull(image_tag)
-        except docker_errors.ImageNotFound:
-            raise errors.ImageNotFoundError(self.image_version)
-        except docker_errors.APIError as e:
-            error_msg = str(e).lower()
-            if "unauthorized" in error_msg or "denied" in error_msg:
-                raise errors.ComposerCliError(
-                    "Docker イメージの取得に認証エラーが発生しました。\n"
-                    "対処: gcloud auth configure-docker us-docker.pkg.dev"
-                )
-            raise errors.ComposerCliError(f"Docker イメージの取得に失敗しました: {e}")
-        env_vars = {**self._default_airflow_env(), **(self.environment_vars or {})}
-        entrypoint = f"sh {constants.ENTRYPOINT_PATH}"
-        c = self.docker_client.containers.create(
-            image=image_tag,
-            name=self.container_name,
-            entrypoint=entrypoint,
-            environment=env_vars,
-            mounts=self._mounts(include_db=False),
-            # Bind webserver to localhost only for security
-            ports={
-                "8080/tcp": (
-                    "127.0.0.1" if composer_settings.BIND_TO_LOCALHOST_ONLY else "0.0.0.0",
-                    self.port,
-                )
-            },
-            healthcheck={
-                "Test": [
-                    "CMD-SHELL",
-                    "curl -f http://localhost:8080/health || exit 1",
-                ],
-                "Interval": constants.HEALTHCHECK_INTERVAL_NS,
-                "Timeout": constants.HEALTHCHECK_TIMEOUT_NS,
-                "Retries": constants.HEALTHCHECK_RETRIES,
-                "StartPeriod": constants.HEALTHCHECK_START_PERIOD_APP_NS,
-            },
-            mem_limit=composer_settings.DOCKER_MEMORY_LIMIT,
-            detach=True,
-        )
-        self._copy_files_to_container(c)
-        return c
-
-    def _auto_import_variables(self):
-        """variables.json が存在すれば Airflow にインポートし、インポート後に削除する。"""
-        variables_json_path = self.env_dir_path / "data" / "variables.json"
-        if variables_json_path.is_file():
-            self.run_airflow_command(
-                ["variables", "import", "/home/airflow/gcs/data/variables.json"]
-            )
-            try:
-                variables_json_path.unlink()
-            except Exception as e:
-                LOG.warning(f"一時ファイル削除失敗: {e}")
-
-    def _wait_for_db_ready(self, db, timeout_seconds: int = 60, interval_seconds: int = 2) -> None:
-        """PostgreSQL コンテナが接続可能になるまで待機する。
-
-        Docker ヘルスチェックのステータスを確認し、healthy になるまでポーリングする。
-        ヘルスチェックが設定されていない場合は pg_isready コマンドで直接確認する。
-        """
-
-        def _check_db() -> bool:
-            db.reload()
-            health = db.attrs.get("State", {}).get("Health", {}).get("Status")
-            if health == "healthy":
-                return True
-            # ヘルスチェック未設定の場合は exec で直接確認する
-            if health is None:
-                result = db.exec_run(
-                    ["pg_isready", "-U", composer_settings.POSTGRES_USER,
-                     "-d", composer_settings.POSTGRES_DB]
-                )
-                return result.exit_code == 0
-            return False
-
-        self._poll_until_ready(
-            check_fn=_check_db,
-            timeout_seconds=timeout_seconds,
-            interval_seconds=interval_seconds,
-            label="PostgreSQL の起動を待機中",
-            timeout_message=(
-                f"PostgreSQL が {timeout_seconds} 秒以内に起動しませんでした。"
-                " Docker のメモリ割り当てを確認してください（推奨: 4GB 以上）。"
-            ),
-        )
-
-    def _ensure_containers_running(self) -> Tuple:
-        """DB・Appコンテナを起動し、(db, app) タプルを返す。"""
-        self._assert_options()
-        files.assert_dag_path_exists(self.dags_path)
-        net = self._network(create=True)
-
-        # DBコンテナの取得/作成/起動
-        db = self._get_container(self.db_container_name, ignore_not_found=True) or self._create_db()
-        if db.status != constants.ContainerStatus.RUNNING:
-            db.start()
-        self._ensure_attached(net, db)
-
-        # DBが接続可能になるまで待機
-        self._wait_for_db_ready(db)
-
-        # Appコンテナの取得/作成/起動
-        app = self._get_container(self.container_name, ignore_not_found=True) or self._create_app()
-        if app.status != constants.ContainerStatus.RUNNING:
-            self._copy_files_to_container(app)
-            app.start()
-        self._ensure_attached(net, app)
-
-        return db, app
-
-    def _handle_first_time_init(self):
-        """初回セットアップ判定と実行。未初期化なら初期化してバナー表示。"""
-        initialized_marker = self.env_dir_path / ".initialized"
-        if not initialized_marker.exists():
-            self._first_time_init()
-            self._show_setup_banner()
-        else:
-            print(f"{self.name} 環境を起動しました。")
-            print(f"Airflow Web UI: http://localhost:{self.port}")
-
     def start(self):
         """既存環境をバックグラウンドで起動（再起動用）。"""
         self._ensure_containers_running()
@@ -570,103 +269,6 @@ class Environment:
         )
 
         print(f"{self.name} 環境を起動しました。")
-
-    def _run_airflow_setup_command(self, command, description: str) -> bool:
-        """Airflow セットアップコマンドを実行するヘルパー。成功時 True を返す。"""
-        try:
-            self.run_airflow_command(command, quiet=True)
-            return True
-        except Exception:
-            LOG.debug(f"{description}に失敗しました", exc_info=True)
-            return False
-
-    def _setup_google_connection(self) -> bool:
-        """Google Cloud のデフォルト接続を設定する。成功時 True を返す。"""
-        return self._run_airflow_setup_command(
-            [
-                "connections", "add",
-                "google_cloud_default",
-                "--conn-type", "google_cloud_platform",
-                "--conn-extra", json.dumps({
-                    "extra__google_cloud_platform__scope":
-                        "https://www.googleapis.com/auth/cloud-platform",
-                }),
-            ],
-            description="Google Cloud 接続の設定",
-        )
-
-    def _create_admin_user(self) -> bool:
-        """Admin ユーザーを作成する。成功時 True を返す。"""
-        return self._run_airflow_setup_command(
-            [
-                "users", "create",
-                "--role", "Admin",
-                "--username", composer_settings.ADMIN_USERNAME,
-                "--password", composer_settings.ADMIN_PASSWORD,
-                "--email", composer_settings.ADMIN_EMAIL,
-                "--firstname", composer_settings.ADMIN_FIRSTNAME,
-                "--lastname", composer_settings.ADMIN_LASTNAME,
-            ],
-            description="Admin ユーザーの作成",
-        )
-
-    def _first_time_init(self):
-        """初回起動時の自動セットアップを実行する。"""
-        print(f"{constants.ANSI_BLUE}初回セットアップを実行しています...{constants.ANSI_RESET}")
-
-        gcp_ok = self._setup_google_connection()
-        admin_ok = self._create_admin_user()
-
-        if not gcp_ok:
-            print("⚠ Google Cloud 接続の設定をスキップしました（GCP未設定の場合は正常です）")
-        if not admin_ok:
-            print("⚠ Admin ユーザーの作成をスキップしました（既に存在する場合は正常です）")
-
-        (self.env_dir_path / ".initialized").touch()
-
-    def _show_setup_banner(self):
-        """初回セットアップ完了バナーを表示する。"""
-        P = "\033[38;5;197m"
-        P2 = "\033[38;5;163m"
-        P3 = "\033[38;5;164m"
-        P4 = "\033[38;5;165m"
-        P5 = "\033[38;5;201m"
-        P6 = "\033[38;5;200m"
-        Y = "\033[1;33m"
-        G = "\033[1;32m"
-        C = "\033[1;36m"
-        R = "\033[0m"
-
-        print()
-        print(f"{Y}=========================================={R}")
-        print(f"{Y}   セットアップが完了しました！{R}")
-        print(f"{Y}=========================================={R}")
-        print()
-        print(f"{P}  ██████╗ ██████╗ ███╗   ███╗██████╗  ███████╗███████╗██████╗ {R}")
-        print(f"{P2} ██╔════╝██╔═══██╗████╗ ████║██╔══██╗██╔════╝██╔════╝██╔══██╗{R}")
-        print(f"{P3} ██║     ██║   ██║██╔████╔██║██████╔╝███████╗█████╗  ██████╔╝{R}")
-        print(f"{P4} ██║     ██║   ██║██║╚██╔╝██║██╔═══╝ ╚════██║██╔══╝  ██╔══██╗{R}")
-        print(f"{P5} ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║     ███████║███████╗██║  ██║{R}")
-        print(f"{P6}  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝{R}")
-        print()
-        print(f"{P}  ██╗      ██████╗  ██████╗ █████╗ ██╗     {R}")
-        print(f"{P2} ██║     ██╔═══██╗██╔════╝██╔══██╗██║     {R}")
-        print(f"{P3} ██║     ██║   ██║██║     ███████║██║     {R}")
-        print(f"{P4} ██║     ██║   ██║██║     ██╔══██║██║     {R}")
-        print(f"{P5} ███████╗╚██████╔╝╚██████╗██║  ██║███████╗{R}")
-        print(f"{P6} ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝{R}")
-        print()
-        print(f"{P}       ██╗██████╗ {R}")
-        print(f"{P2}      ██║██╔══██╗{R}")
-        print(f"{P3}      ██║██████╔╝{R}")
-        print(f"{P2} ██   ██║██╔═══╝ {R}")
-        print(f"{P5}  ╚████╔╝██║     {R}")
-        print(f"{P6}   ╚═══╝ ╚═╝     {R}")
-        print()
-        print(f"{G} Airflow Web UI:{R}  {C}http://localhost:{self.port}{R}")
-        print()
-        print(f"{Y}=========================================={R}")
-        print()
 
     def start_foreground(self):
         """環境をフォアグラウンドモードで起動し、コンテナログにアタッチする。"""
@@ -726,33 +328,6 @@ class Environment:
         )
 
         self._handle_first_time_init()
-
-    def _wait_until_webserver_ready(self, timeout_seconds: int, interval_seconds: int) -> None:
-        url = f"http://localhost:{self.port}"
-
-        def _check_webserver() -> bool:
-            try:
-                with urllib.request.urlopen(url, timeout=5) as resp:
-                    return resp.getcode() in (200, 302)
-            except (
-                urllib.error.URLError,
-                urllib.error.HTTPError,
-                TimeoutError,
-                ConnectionResetError,
-                OSError,
-            ):
-                return False
-
-        self._poll_until_ready(
-            check_fn=_check_webserver,
-            timeout_seconds=timeout_seconds,
-            interval_seconds=interval_seconds,
-            label="Airflow Web サーバーを起動中",
-            timeout_message=(
-                f"Airflow Web サーバーが {timeout_seconds} 秒以内に起動しませんでした。"
-                " ログを確認してから、もう一度お試しください。"
-            ),
-        )
 
     def stop(self):
         app = self._get_container(self.container_name, ignore_not_found=True)
