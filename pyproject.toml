@@ -7,7 +7,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "apache-airflow==2.10.5",
+    "apache-airflow==3.1.8",
     "apache-airflow-providers-google>=14.0.0",
     "click>=8.1.8,<9.0.0",
     "docker>=7.0.0",
