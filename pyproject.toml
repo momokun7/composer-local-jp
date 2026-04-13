@@ -19,7 +19,7 @@ composer-local = "composer_local.__main__:cli"
 
 [project.optional-dependencies]
 gcp = [
-    "google-auth>=2.29.0,<3.0.0",
+    "google-auth>=2.49.2,<3.0.0",
     "google-cloud-orchestration-airflow>=1.2.0",
     "google-cloud-artifact-registry>=1.2.0",
     "google-cloud-secret-manager>=2.0.0",
