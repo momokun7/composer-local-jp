@@ -384,10 +384,20 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
         env_status_colored = utils.wrap_status_in_color(env_status)
 
         try:
-            auth_info = utils.get_auth_info()
+            from composer_local import gcp_sync
+
+            auth_check = gcp_sync.check_auth_validity()
             gcloud_path = utils.resolve_gcloud_config_path()
-        except (errors.ComposerCliError, Exception):
-            auth_info = {"description": "ローカル専用モード（GCP 未設定）"}
+            if auth_check["is_valid"]:
+                auth_status = utils.wrap_auth_status_in_color(
+                    auth_check["auth_info"]["description"], True
+                )
+            else:
+                auth_status = utils.wrap_auth_status_in_color(
+                    auth_check["error_message"], False
+                )
+        except Exception:
+            auth_status = "ローカル専用モード（GCP 未設定）"
             gcloud_path = ""
 
         msg = utils.create_plain_status_text(
@@ -396,7 +406,7 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
             web_url=web_url,
             image_version=self.image_version,
             dags_path=str(self.dags_path),
-            auth_description=auth_info["description"],
+            auth_status=auth_status,
             gcloud_path=gcloud_path,
         )
         console.get_console().print(f"\n{msg}\n{constants.FINAL_ENV_MESSAGE}")
