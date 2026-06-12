@@ -1,40 +1,33 @@
 repos:
-  # 機密情報の検出
-  - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
+  # 機密情報の検出（gitleaks: baseline 不要で運用が軽い）
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
     hooks:
-      - id: detect-secrets
-        args: ['--baseline', '.secrets.baseline']
-        exclude: package.lock.json
+      - id: gitleaks
 
-  # Pythonコードのフォーマット
-  - repo: https://github.com/psf/black
-    rev: 24.10.0
+  # lint + フォーマット（ruff に統一）
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
     hooks:
-      - id: black
-        language_version: python3.11
-
-  # Import文のソート
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
 
   # 基本的なチェック
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
-        args: ['--maxkb=1000']
+        args: ["--maxkb=1000"]
       - id: check-json
       - id: check-merge-conflict
       - id: detect-private-key
 
   # Shellスクリプトのチェック
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.9.0.6
+    rev: v0.11.0.1
     hooks:
       - id: shellcheck

@@ -7,6 +7,16 @@ on:
     branches: [main]
 
 jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -19,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
       - name: Syntax check
-        run: uv run python -m py_compile composer_local/cli.py && uv run python -m py_compile composer_local/environment.py && uv run python -m py_compile composer_local/errors.py && uv run python -m py_compile composer_local/utils.py && uv run python -m py_compile composer_local/constants.py
+        run: uv run python -m py_compile composer_local/cli.py composer_local/environment.py composer_local/docker_ops.py composer_local/gcp_sync.py composer_local/errors.py composer_local/utils.py composer_local/constants.py
       - name: Ruff lint
         run: uv run ruff check composer_local/
 
