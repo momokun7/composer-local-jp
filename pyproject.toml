@@ -7,8 +7,6 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "apache-airflow==2.10.5",
-    "apache-airflow-providers-google>=14.0.0",
     "click>=8.1.8,<9.0.0",
     "docker>=7.0.0",
     "rich>=13.7.0",
@@ -24,10 +22,15 @@ gcp = [
     "google-cloud-artifact-registry>=1.2.0",
     "google-cloud-secret-manager>=2.0.0",
 ]
+dag-dev = [
+    "apache-airflow==2.10.5",
+    "apache-airflow-providers-google>=14.0.0",
+]
 dev = [
     "ruff>=0.8.0",
     "pytest>=8.0.0,<9.0.0",
     "pytest-cov>=6.0.0,<7.0.0",
+    "pre-commit>=4.0.0",
 ]
 
 [tool.ruff]
@@ -57,7 +60,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0"]
+dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0", "pre-commit>=4.0.0"]
 
 [tool.hatch.version]
 path = "composer_local/version.py"
