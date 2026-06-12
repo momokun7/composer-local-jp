@@ -11,10 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 import docker
 
-from composer_local import composer_settings, console, constants, errors, files, utils
-from composer_local.docker_manager import DockerManagerMixin
-from composer_local.health_check import HealthCheckMixin
-from composer_local.initialization import InitializationMixin
+from composer_local import composer_settings, console, constants, docker_ops, errors, files, utils
 
 LOG = logging.getLogger(__name__)
 
@@ -79,7 +76,7 @@ class EnvironmentConfig:
         return composer_settings.LOCAL_PORT
 
 
-class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
+class Environment:
     def __init__(
         self,
         env_dir_path: pathlib.Path,
@@ -236,47 +233,14 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
             database_engine=cfg.database_engine,
         )
 
-    @classmethod
-    def from_source_environment(
-        cls,
-        source_environment: str,
-        project: str,
-        location: str,
-        env_dir_path: pathlib.Path,
-        web_server_port: Optional[int],
-        dags_path: Optional[str],
-        database_engine: str,
-    ):
-        # Simplified: do not call Composer API here.
-        return cls(
-            env_dir_path=env_dir_path,
-            project_id=project,
-            image_version=composer_settings.COMPOSER_IMAGE_VERSION,
-            location=location,
-            dags_path=dags_path,
-            dag_dir_list_interval=10,
-            port=web_server_port,
-            database_engine=database_engine,
-        )
-
-    def start(self):
-        """既存環境をバックグラウンドで起動（再起動用）。"""
-        self._ensure_containers_running()
-
-        self._wait_until_webserver_ready(
-            timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
-            interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
-        )
-
-        print(f"{self.name} 環境を起動しました。")
-
     def start_foreground(self):
         """環境をフォアグラウンドモードで起動し、コンテナログにアタッチする。"""
         import atexit
 
-        db, app = self._ensure_containers_running()
+        db, app = docker_ops.ensure_containers_running(self)
 
-        self._wait_until_webserver_ready(
+        docker_ops.wait_until_webserver_ready(
+            self.port,
             timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
             interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
         )
@@ -318,35 +282,20 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
             stop_containers()
 
-    def resume_env(self):
-        """停止中の環境を再開する。"""
-        self._ensure_containers_running()
-
-        self._wait_until_webserver_ready(
-            timeout_seconds=composer_settings.WEBSERVER_TIMEOUT,
-            interval_seconds=composer_settings.WEBSERVER_CHECK_INTERVAL,
-        )
-
-        self._handle_first_time_init()
-
     def stop(self):
-        app = self._get_container(self.container_name, ignore_not_found=True)
+        app = docker_ops.get_container(self, self.container_name, ignore_not_found=True)
         if app:
             app.stop(timeout=30)
-        db = self._get_container(self.db_container_name, ignore_not_found=True)
+        db = docker_ops.get_container(self, self.db_container_name, ignore_not_found=True)
         if db:
             db.stop(timeout=30)
 
-    def restart(self):
-        self.stop()
-        self.start()
-
     def status(self) -> str:
-        app = self._get_container(self.container_name, ignore_not_found=True)
+        app = docker_ops.get_container(self, self.container_name, ignore_not_found=True)
         return app.status if app else "Not started"
 
     def logs(self, follow: bool, max_lines):
-        app = self._get_container(self.container_name, assert_running=True)
+        app = docker_ops.get_container(self, self.container_name, assert_running=True)
         stream = app.logs(timestamps=True, stream=follow, follow=follow, tail=max_lines)
         if follow:
             for line in stream:
@@ -356,7 +305,7 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
                 console.get_console().print(line)
 
     def run_airflow_command(self, command: List, quiet: bool = False) -> None:
-        app = self._get_container(self.container_name, assert_running=True)
+        app = docker_ops.get_container(self, self.container_name, assert_running=True)
         cmd = ["/home/airflow/run_as_user.sh", "airflow", *command]
         result = app.exec_run(cmd=cmd)
 
@@ -413,16 +362,135 @@ class Environment(DockerManagerMixin, HealthCheckMixin, InitializationMixin):
 
     def remove(self, force: bool, force_error):
         for name in (self.container_name, self.db_container_name):
-            c = self._get_container(name, ignore_not_found=True)
+            c = docker_ops.get_container(self, name, ignore_not_found=True)
             if c is not None:
                 if c.status == constants.ContainerStatus.RUNNING:
                     if not force:
                         raise force_error
                     c.stop(timeout=30)
                 c.remove()
-        net = self._network(create=False)
+        net = docker_ops.get_network(self, create=False)
         if net:
             net.remove()
+
+    def _auto_import_variables(self):
+        """variables.json が存在すれば Airflow にインポートし、インポート後に削除する。"""
+        variables_json_path = self.env_dir_path / "data" / "variables.json"
+        if variables_json_path.is_file():
+            self.run_airflow_command(
+                ["variables", "import", "/home/airflow/gcs/data/variables.json"]
+            )
+            try:
+                variables_json_path.unlink()
+            except Exception as e:
+                LOG.warning(f"一時ファイル削除失敗: {e}")
+
+    def _run_airflow_setup_command(self, command: List, description: str) -> bool:
+        """Airflow セットアップコマンドを実行するヘルパー。成功時 True を返す。"""
+        try:
+            self.run_airflow_command(command, quiet=True)
+            return True
+        except Exception:
+            LOG.debug(f"{description}に失敗しました", exc_info=True)
+            return False
+
+    def _setup_google_connection(self) -> bool:
+        """Google Cloud のデフォルト接続を設定する。成功時 True を返す。"""
+        return self._run_airflow_setup_command(
+            [
+                "connections", "add",
+                "google_cloud_default",
+                "--conn-type", "google_cloud_platform",
+                "--conn-extra", json.dumps({
+                    "extra__google_cloud_platform__scope":
+                        "https://www.googleapis.com/auth/cloud-platform",
+                }),
+            ],
+            description="Google Cloud 接続の設定",
+        )
+
+    def _create_admin_user(self) -> bool:
+        """Admin ユーザーを作成する。成功時 True を返す。"""
+        return self._run_airflow_setup_command(
+            [
+                "users", "create",
+                "--role", "Admin",
+                "--username", composer_settings.ADMIN_USERNAME,
+                "--password", composer_settings.ADMIN_PASSWORD,
+                "--email", composer_settings.ADMIN_EMAIL,
+                "--firstname", composer_settings.ADMIN_FIRSTNAME,
+                "--lastname", composer_settings.ADMIN_LASTNAME,
+            ],
+            description="Admin ユーザーの作成",
+        )
+
+    def _first_time_init(self):
+        """初回起動時の自動セットアップを実行する。"""
+        print(f"{constants.ANSI_BLUE}初回セットアップを実行しています...{constants.ANSI_RESET}")
+
+        gcp_ok = self._setup_google_connection()
+        admin_ok = self._create_admin_user()
+
+        if not gcp_ok:
+            print("⚠ Google Cloud 接続の設定をスキップしました（GCP未設定の場合は正常です）")
+        if not admin_ok:
+            print("⚠ Admin ユーザーの作成をスキップしました（既に存在する場合は正常です）")
+
+        (self.env_dir_path / ".initialized").touch()
+
+    def _show_setup_banner(self):
+        """初回セットアップ完了バナーを表示する。"""
+        P = "\033[38;5;197m"
+        P2 = "\033[38;5;163m"
+        P3 = "\033[38;5;164m"
+        P4 = "\033[38;5;165m"
+        P5 = "\033[38;5;201m"
+        P6 = "\033[38;5;200m"
+        Y = "\033[1;33m"
+        G = "\033[1;32m"
+        C = "\033[1;36m"
+        R = "\033[0m"
+
+        print()
+        print(f"{Y}=========================================={R}")
+        print(f"{Y}   セットアップが完了しました！{R}")
+        print(f"{Y}=========================================={R}")
+        print()
+        print(f"{P}  ██████╗ ██████╗ ███╗   ███╗██████╗  ███████╗███████╗██████╗ {R}")
+        print(f"{P2} ██╔════╝██╔═══██╗████╗ ████║██╔══██╗██╔════╝██╔════╝██╔══██╗{R}")
+        print(f"{P3} ██║     ██║   ██║██╔████╔██║██████╔╝███████╗█████╗  ██████╔╝{R}")
+        print(f"{P4} ██║     ██║   ██║██║╚██╔╝██║██╔═══╝ ╚════██║██╔══╝  ██╔══██╗{R}")
+        print(f"{P5} ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║     ███████║███████╗██║  ██║{R}")
+        print(f"{P6}  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝{R}")
+        print()
+        print(f"{P}  ██╗      ██████╗  ██████╗ █████╗ ██╗     {R}")
+        print(f"{P2} ██║     ██╔═══██╗██╔════╝██╔══██╗██║     {R}")
+        print(f"{P3} ██║     ██║   ██║██║     ███████║██║     {R}")
+        print(f"{P4} ██║     ██║   ██║██║     ██╔══██║██║     {R}")
+        print(f"{P5} ███████╗╚██████╔╝╚██████╗██║  ██║███████╗{R}")
+        print(f"{P6} ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝{R}")
+        print()
+        print(f"{P}       ██╗██████╗ {R}")
+        print(f"{P2}      ██║██╔══██╗{R}")
+        print(f"{P3}      ██║██████╔╝{R}")
+        print(f"{P2} ██   ██║██╔═══╝ {R}")
+        print(f"{P5}  ╚████╔╝██║     {R}")
+        print(f"{P6}   ╚═══╝ ╚═╝     {R}")
+        print()
+        print(f"{G} Airflow Web UI:{R}  {C}http://localhost:{self.port}{R}")
+        print()
+        print(f"{Y}=========================================={R}")
+        print()
+
+    def _handle_first_time_init(self):
+        """初回セットアップ判定と実行。未初期化なら初期化してバナー表示。"""
+        initialized_marker = self.env_dir_path / ".initialized"
+        if not initialized_marker.exists():
+            self._first_time_init()
+            self._show_setup_banner()
+        else:
+            print(f"{self.name} 環境を起動しました。")
+            print(f"Airflow Web UI: http://localhost:{self.port}")
 
 
 def get_environments_status(envs: List[pathlib.Path]) -> List[EnvironmentStatus]:
