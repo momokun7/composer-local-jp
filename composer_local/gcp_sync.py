@@ -1,37 +1,249 @@
-# Copyright 2025 Hirohiko Nakui
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""GCP 連携モジュール
 
-"""
-Secret Manager 変数同期モジュール
-
-このモジュールは、Google Cloud Secret Manager に保存された Airflow Variables を
-ローカルの Composer 環境へ安全に同期する機能を提供します。
+Cloud Composer / Secret Manager との Variables・設定同期、
+gcloud 認証情報の取得をすべてこのモジュールに集約する。
+google-cloud-* パッケージは関数内で遅延 import する（gcp extra）。
 """
 
 import json
 import logging
+import pathlib
+import re
 import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from composer_local import composer_settings, constants, errors
-from composer_local.utils import require_gcp_secret_manager
+from composer_local.utils import is_windows_os
 
 LOG = logging.getLogger(__name__)
+
+_CLOUD_CLI_POSIX_COMMAND = "gcloud"
+_CLOUD_CLI_WINDOWS_COMMAND = "gcloud.cmd"
+_CLOUD_CLI_CONFIG_COMMAND = "config config-helper --format json"
+
+_GCP_INSTALL_HINT = (
+    "GCP 連携機能には追加パッケージが必要です。\n"
+    "  uv sync --extra gcp\n"
+    "を実行してください。"
+)
+
+
+# ---------------------------------------------------------------------------
+# GCP パッケージの遅延インポートヘルパー
+# ---------------------------------------------------------------------------
+
+
+def require_gcp_secret_manager():
+    """google-cloud-secret-manager パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        tuple: (secretmanager モジュール, DefaultCredentialsError 例外クラス)
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
+    try:
+        from google.auth.exceptions import DefaultCredentialsError
+        from google.cloud import secretmanager
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return secretmanager, DefaultCredentialsError
+
+
+def require_gcp_composer():
+    """google-cloud-orchestration-airflow パッケージの存在を確認し、モジュールを返す。
+
+    Returns:
+        service_v1 モジュール
+
+    Raises:
+        ImportError: パッケージが未インストールの場合
+    """
+    try:
+        from google.cloud.orchestration.airflow import service_v1
+    except ImportError as _err:
+        raise ImportError(_GCP_INSTALL_HINT) from _err
+    return service_v1
+
+
+# ---------------------------------------------------------------------------
+# gcloud 認証情報の取得・検証
+# ---------------------------------------------------------------------------
+
+
+def gcloud_cmd() -> str:
+    if is_windows_os():
+        return _CLOUD_CLI_WINDOWS_COMMAND
+    return _CLOUD_CLI_POSIX_COMMAND
+
+
+def get_project_id() -> Optional[str]:
+    try:
+        output = subprocess.run(
+            [gcloud_cmd()] + _CLOUD_CLI_CONFIG_COMMAND.split(),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        LOG.debug("Cloud CLI output: %s", output)
+    except (subprocess.CalledProcessError, OSError, IOError) as err:
+        logging.debug("Failed to get project ID from the Cloud CLI.", exc_info=True)
+        raise errors.InvalidAuthError(err)
+
+    try:
+        configuration = json.loads(output)
+    except ValueError as err:
+        raise errors.ComposerCliError(f"gcloud CLI の設定のデコードに失敗しました: {err}") from None
+
+    try:
+        project_id = configuration["configuration"]["properties"]["core"]["project"]
+        LOG.info("GCP プロジェクトを使用します: %s", project_id)
+        return project_id
+    except KeyError:
+        raise errors.ComposerCliError("gcloud の設定に project id が存在しません。")
+
+
+def get_auth_info() -> Dict[str, str]:
+    """現在のgcloud認証情報を取得する"""
+    from composer_local import utils
+
+    try:
+        # application_default_credentials.json を確認
+        gcloud_config_path = utils.resolve_gcloud_config_path()
+        adc_path = pathlib.Path(gcloud_config_path) / "application_default_credentials.json"
+
+        if adc_path.exists():
+            try:
+                with open(adc_path, 'r') as f:
+                    adc_data = json.load(f)
+
+                # impersonated_service_account の場合はサービスアカウントの権限借用
+                if adc_data.get("type") == "impersonated_service_account":
+                    service_account_url = adc_data.get("service_account_impersonation_url", "")
+                    # URLからサービスアカウント名を抽出
+                    # URL形式: https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/
+                    # ACCOUNT_EMAIL:generateAccessToken
+                    if "serviceAccounts/" in service_account_url:
+                        account_name = service_account_url.split("serviceAccounts/")[-1].split(":")[
+                            0
+                        ]
+                    else:
+                        account_name = "不明なサービスアカウント"
+
+                    return {
+                        "type": "service_account",
+                        "account": account_name,
+                        "description": f"サービスアカウントの権限借用: {account_name}",
+                    }
+            except (json.JSONDecodeError, KeyError, IOError) as e:
+                LOG.debug("Failed to parse application_default_credentials.json: %s", e)
+
+        # 通常のユーザー認証の場合
+        account_output = subprocess.run(
+            [gcloud_cmd(), "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        return {
+            "type": "user",
+            "account": account_output,
+            "description": f"ユーザー認証: {account_output}",
+        }
+    except (subprocess.CalledProcessError, OSError, IOError) as err:
+        LOG.debug("Failed to get auth info: %s", err)
+        return {"type": "unknown", "account": "不明", "description": "認証情報の取得に失敗しました"}
+
+
+def _auth_result(
+    auth_info: Dict[str, str],
+    error_message: Optional[str] = None,
+    suggestions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """check_auth_validity の戻り値を組み立てるヘルパー"""
+    if error_message is None:
+        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
+    default_suggestions = [
+        "make auth-user を実行してユーザー認証を更新してください",
+        "make auth-sa を実行してサービスアカウント認証を更新してください",
+    ]
+    return {
+        "is_valid": False,
+        "auth_info": auth_info,
+        "error_message": error_message,
+        "suggestions": suggestions or default_suggestions,
+    }
+
+
+def _error_msg_for_returncode(returncode: int) -> str:
+    """returncode に応じた認証エラーメッセージを返す"""
+    if returncode == 1:
+        return "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
+    if returncode == 2:
+        return "gcloudコマンドの実行に失敗しました"
+    return f"認証の検証中にエラーが発生しました（終了コード: {returncode}）"
+
+
+def check_auth_validity() -> Dict[str, Any]:
+    """現在の認証情報の有効性をチェックする。
+
+    Returns:
+        Dict[str, Any]: ``is_valid``, ``auth_info``, ``error_message``,
+        ``suggestions`` をキーに持つ辞書。
+    """
+    auth_info = get_auth_info()
+
+    if auth_info.get("type") == "unknown":
+        return _auth_result(auth_info, "認証情報が見つかりません")
+
+    try:
+        project = subprocess.run(
+            [gcloud_cmd(), "config", "get-value", "project"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+        if not project:
+            return _auth_result(auth_info, "プロジェクトが設定されていません", [
+                "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
+                "make auth-user を実行して認証を行ってください",
+            ])
+
+        subprocess.run(
+            [gcloud_cmd(), "auth", "print-access-token"],
+            check=True, capture_output=True, text=True,
+        )
+
+        if auth_info.get("type") == "service_account":
+            subprocess.run(
+                [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy",
+                 auth_info.get("account", "")],
+                check=True, capture_output=True, text=True,
+            )
+
+        return _auth_result(auth_info)
+
+    except subprocess.CalledProcessError as e:
+        return _auth_result(auth_info, _error_msg_for_returncode(e.returncode))
+    except FileNotFoundError:
+        return _auth_result(
+            auth_info,
+            "gcloudコマンドが見つかりません"
+            "（Google Cloud SDKがインストールされていない可能性があります）",
+            ["Google Cloud SDKをインストールしてください",
+             "https://cloud.google.com/sdk/docs/install を参照してください"],
+        )
+    except Exception as e:
+        return _auth_result(auth_info, f"予期しないエラーが発生しました: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Variables 同期（Secret Manager / 直接同期）
+# ---------------------------------------------------------------------------
 
 
 def run_parallel_container_commands(
@@ -241,29 +453,43 @@ class SecretManagerSync:
             raise errors.ComposerCliError(f"Secret の取得に失敗しました {sid}: {e}")
 
     def update_secret(self, secret_id: str | None, new_value: str) -> None:
-        """
-        既存の Secret に新しいバージョンを追加する。
-
-        Args:
-            secret_id: Secret の ID
-            new_value: 新しい値（文字列）
-        """
+        """既存の Secret に新しいバージョンを追加する。Secret が無ければ新規作成する。"""
         client = self._get_client()
         sid = secret_id or self.secret_id
-
+        parent = f"projects/{self.project_id}"
         try:
             client.add_secret_version(
                 request={
-                    "parent": f"projects/{self.project_id}/secrets/{sid}",
+                    "parent": f"{parent}/secrets/{sid}",
                     "payload": {"data": new_value.encode("UTF-8")},
                 }
             )
-
             LOG.info(f"Secret を更新しました: {sid}")
-
         except Exception as e:
-            LOG.error(f"Secret 更新エラー {sid}: {e}")
-            raise errors.ComposerCliError(f"Secret の更新に失敗しました {sid}: {e}")
+            err_lower = str(e).lower()
+            recoverable = (
+                "not found" in err_lower
+                or "does not exist" in err_lower
+                or "destroyed" in err_lower
+            )
+            if not recoverable:
+                LOG.error(f"Secret 更新エラー {sid}: {e}")
+                raise errors.ComposerCliError(f"Secret の更新に失敗しました {sid}: {e}")
+            print(f"{constants.ANSI_YELLOW}Secret が存在しないため、新規作成します{constants.ANSI_RESET}")
+            client.create_secret(
+                request={
+                    "parent": parent,
+                    "secret_id": sid,
+                    "secret": {"replication": {"automatic": {}}},
+                }
+            )
+            client.add_secret_version(
+                request={
+                    "parent": f"{parent}/secrets/{sid}",
+                    "payload": {"data": new_value.encode("UTF-8")},
+                }
+            )
+            LOG.info(f"Secret を新規作成しました: {sid}")
 
     def get_all_variables(self) -> dict[str, str]:
         """
@@ -487,21 +713,140 @@ class SecretManagerSync:
         except Exception as e:
             LOG.error(f"Airflow Variables削除処理でエラーが発生しました: {e}")
 
-def create_sync_client(
-    project_id: str,
-    local_env_path: Path | None = None,
-) -> SecretManagerSync:
-    """
-    SecretManagerSync クライアントを適切な設定で作成する。
 
-    Args:
-        project_id: GCP プロジェクト ID
-        local_env_path: ローカル環境のパス
+# ---------------------------------------------------------------------------
+# Composer 設定の同期
+# ---------------------------------------------------------------------------
+
+
+def _compose_env_resource_name(project_id: str, location: str, env_name: str) -> str:
+    return f"projects/{project_id}/locations/{location}/environments/{env_name}"
+
+
+def fetch_composer_env_details(project_id: str, location: str, env_name: str) -> dict:
+    """
+    Cloud Composer 環境の詳細を API を使用して取得します。
 
     Returns:
-        SecretManagerSync: 構成済みクライアント
+        dict: キーとして image_version, python_version, location, env_name を持つ辞書
     """
-    return SecretManagerSync(
-        project_id=project_id,
-        local_env_path=local_env_path,
+    service_v1 = require_gcp_composer()
+    client = service_v1.EnvironmentsClient()
+    name = _compose_env_resource_name(project_id, location, env_name)
+    try:
+        env = client.get_environment(request={"name": name})
+    except Exception as err:
+        raise errors.ComposerCliError(f"Composer 環境 '{name}' の取得に失敗しました: {err}")
+
+    software = env.config.software_config
+    image_version = getattr(software, "image_version", "") or ""
+    python_version = getattr(software, "python_version", "") or ""
+
+    return {
+        "env_name": env_name,
+        "location": location,
+        "image_version": image_version,
+        "python_version": str(python_version) if python_version else "",
+    }
+
+
+def _update_setting(content: str, key: str, value: str) -> str:
+    """既存の設定ファイル内の特定のキーの値を更新する。キーが存在しない場合は末尾に追加する。"""
+    pattern = re.compile(rf'^({key}\s*=\s*).*$', re.MULTILINE)
+    new_line = f'{key} = "{value}"'
+    if pattern.search(content):
+        return pattern.sub(new_line, content)
+    # キーが存在しない場合、末尾に追加
+    return content.rstrip() + f"\n{new_line}\n"
+
+
+def write_composer_settings(
+    settings_path: Path,
+    env_name: str,
+    location: str,
+    image_version: str,
+    python_version: Optional[str],
+) -> None:
+    """composer_settings.py の Composer 関連設定のみを更新します。既存の設定は保持されます。"""
+    if settings_path.exists():
+        content = settings_path.read_text()
+    else:
+        content = ""
+
+    updates = {
+        "COMPOSER_ENV_NAME": env_name,
+        "COMPOSER_LOCATION": location,
+        "COMPOSER_IMAGE_VERSION": image_version,
+        "COMPOSER_PYTHON_VERSION": python_version or "",
+    }
+
+    for key, value in updates.items():
+        content = _update_setting(content, key, value)
+
+    settings_path.write_text(content)
+    updated_keys = ", ".join(updates.keys())
+    LOG.info("Cloud Composer から %s を更新しました（%s）", settings_path, updated_keys)
+
+
+def sync_composer_settings(
+    project_id: str,
+    location: str,
+    env_name: str,
+    settings_file: Path,
+):
+    details = fetch_composer_env_details(project_id, location, env_name)
+    write_composer_settings(
+        settings_file,
+        env_name=details["env_name"],
+        location=details["location"],
+        image_version=details["image_version"],
+        python_version=details["python_version"],
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI エントリポイント用の同期フロー
+# ---------------------------------------------------------------------------
+
+
+def _write_and_import(env, env_path: Path, variables: Dict[str, str]) -> None:
+    """variables をローカルへ書き出し、Airflow 起動中なら即時インポートする。"""
+    variables_file = env_path / "data" / "variables.json"
+    variables_file.parent.mkdir(parents=True, exist_ok=True)
+    variables_file.write_text(json.dumps(variables, indent=2, ensure_ascii=False))
+    if env.status() == constants.ContainerStatus.RUNNING:
+        env.run_airflow_command(
+            ["variables", "import", "/home/airflow/gcs/data/variables.json"]
+        )
+        variables_file.unlink(missing_ok=True)
+        print(f"起動中の Airflow に {len(variables)} 件の Variables をインポートしました")
+    else:
+        print(f"{len(variables)} 件の Variables を保存しました（次回起動時に自動インポート）")
+
+
+def sync_vars_direct(env, env_path: Path, project: str, location: str, env_name: str) -> None:
+    """Cloud Composer から Variables を直接取得してローカルへ反映する（Secret Manager 不使用）。"""
+    variables = export_variables_via_gcloud(project, location, env_name)
+    if not variables:
+        print(f"{constants.ANSI_YELLOW}Composer に Variables が見つかりません{constants.ANSI_RESET}")
+        return
+    _write_and_import(env, env_path, variables)
+
+
+def sync_vars_via_secret_manager(
+    env, env_path: Path, project: str, location: str, env_name: str, secret_id: str
+) -> None:
+    """Composer → Secret Manager → ローカルの順に Variables を同期する。"""
+    variables = export_variables_via_gcloud(project, location, env_name)
+    client = SecretManagerSync(
+        project_id=project, local_env_path=env_path, secret_id=secret_id
+    )
+    changes = client.compare_variables(variables)
+    if changes["has_changes"]:
+        client.update_secret(secret_id, json.dumps(variables, ensure_ascii=False))
+        print(client.format_variables_diff(changes))
+    else:
+        print(f"{constants.ANSI_YELLOW}Variables に変更はありませんでした。{constants.ANSI_RESET}")
+    stored = client.get_all_variables()
+    client.clear_airflow_variables_in_container(env)
+    _write_and_import(env, env_path, stored)

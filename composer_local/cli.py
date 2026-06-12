@@ -2,15 +2,15 @@
 composer-local CLI ツール
 
 ローカル Composer 環境（Docker）を操作するためのコマンド群を提供します。
-- 環境の作成/起動/停止/再起動/削除
+- 環境の起動/停止/削除
 - ログ表示や Airflow コマンドの実行
-- Secret Manager からの Variables 同期
+- Cloud Composer からの Variables・設定同期
 """
 
 import logging
 import pathlib
 import shutil
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import click
 
@@ -18,35 +18,6 @@ from composer_local import composer_settings, console, constants, errors, files,
 from composer_local import environment as composer_environment
 
 LOG = logging.getLogger(__name__)
-
-
-def apply_cli_option_format(name):
-    return f"--{name.replace('_', '-')}"
-
-
-class MutuallyExclusiveOption(click.Option):
-    def __init__(self, *args, **kwargs):
-        self.mutual = kwargs.pop("mutual")
-        option_names = ", ".join(apply_cli_option_format(name) for name in self.mutual)
-        kwargs["help"] = (
-            f"{kwargs.get('help', '')}. Option is mutually exclusive with {option_names}."
-        ).strip()
-        super().__init__(*args, **kwargs)
-
-    def handle_parse_result(self, ctx, opts, args):
-        current_opt: bool = self.name in opts
-        for mutex_opt in self.mutual:
-            if mutex_opt in opts:
-                if current_opt:
-                    raise click.UsageError(
-                        "Illegal usage: "
-                        f"'{apply_cli_option_format(self.name)}' cannot be used together with "
-                        f"'{apply_cli_option_format(mutex_opt)}'.",
-                        ctx=ctx,
-                    )
-                else:
-                    self.prompt = None
-        return super().handle_parse_result(ctx, opts, args)
 
 
 class LogsMaxLines(click.ParamType):
@@ -78,7 +49,6 @@ def cli(ctx, verbose, debug):
     ローカルで作成・起動・管理できます。
 
     基本的な使い方:
-      composer-local create --from-image-version IMAGE ENV
       composer-local start ENV
       composer-local logs ENV --follow
     """
@@ -86,6 +56,7 @@ def cli(ctx, verbose, debug):
     ctx.obj["verbose"] = verbose
     ctx.obj["debug"] = debug
     utils.setup_logging(verbose, debug)
+
 
 option_port = click.option(
     "--web-server-port",
@@ -103,116 +74,67 @@ required_environment = click.argument(
 optional_environment = click.argument(
     "environment", required=False, metavar="LOCAL_ENVIRONMENT_NAME"
 )
-option_location = click.option(
-    "-l",
-    "--location",
-    default=composer_settings.COMPOSER_LOCATION,
-    show_default=True,
-    help="ロケーションの ID または完全修飾 ID",
-    metavar="LOCATION",
-)
-
-
 @cli.command()
+@optional_environment
+@option_port
 @click.option(
-    "--from-source-environment",
-    cls=MutuallyExclusiveOption,
-    mutual=["from_image_version"],
-    help="複製元にする Composer 環境名",
-    metavar="REMOTE_ENV_NAME",
-)
-@click.option(
-    "--from-image-version",
-    cls=MutuallyExclusiveOption,
-    mutual=["from_source_environment"],
+    "--image-version",
+    default=None,
     help=f"Composer イメージ バージョン（参考: {constants.COMPOSER_VERSIONING_DOCS_LINK}）",
+    show_default="composer_settings.COMPOSER_IMAGE_VERSION",
     metavar="COMPOSER_VERSION",
 )
 @click.option(
     "-p",
     "--project",
+    default=None,
     help="使用する Google Cloud プロジェクト ID",
-    show_default="Cloud CLI の設定値を使用",
     metavar="PROJECT_ID",
 )
-@option_location
-@option_port
 @click.option(
     "--dags-path",
+    default=None,
     help="DAGs フォルダのパス（無ければ作成されます）",
-    show_default="環境ディレクトリ配下の 'dags'",
+    show_default="カレントディレクトリの 'dags'",
     metavar="PATH",
     type=click.Path(file_okay=False),
 )
 @click.option(
-    "--database-engine",
     "--database",
-    help="Airflow メタデータ用のデータベース エンジン",
+    "database_engine",
     default=constants.DatabaseEngine.postgresql,
     show_default=True,
     type=click.Choice(constants.DatabaseEngine.choices(), case_sensitive=False),
     metavar="DATABASE_ENGINE",
 )
-@required_environment
 @errors.catch_exceptions()
-def create(
-    from_source_environment: str,
-    from_image_version: str,
-    project: Optional[str],
-    location: str,
+def start(
+    environment: Optional[str],
     web_server_port: Optional[int],
-    environment: str,
+    image_version: Optional[str],
+    project: Optional[str],
+    dags_path: Optional[str],
     database_engine: str,
-    dags_path: Optional[pathlib.Path] = None,
 ) -> None:
-    print(f"{constants.ANSI_BLUE}環境を作成しています...{constants.ANSI_RESET}")
-    utils.assert_environment_name_is_valid(environment)
-    if not from_source_environment and not from_image_version:
-        raise click.UsageError(
-            "環境の生成元が未指定です。"
-            "--from-source-environment または --from-image-version を指定してください。"
-        )
-    project = utils.resolve_project_id(project)
-    env_dir = pathlib.Path("composer", environment)
-    if env_dir.is_dir():
-        click.confirm(
-            f"環境 '{env_dir}' は既に存在します。上書きしますか？",
-            abort=True,
-        )
-        LOG.info("既存のローカル環境を上書きします。")
-
-    if from_source_environment:
-        env = composer_environment.Environment.from_source_environment(
-            source_environment=from_source_environment,
-            project=project,
-            location=location,
-            env_dir_path=env_dir,
-            web_server_port=web_server_port,
-            dags_path=dags_path,
-            database_engine=database_engine,
-        )
-    else:
+    """環境を起動する。環境が存在しない場合は自動作成する。"""
+    env_name = environment or composer_settings.LOCAL_ENV_NAME
+    env_dir = pathlib.Path("composer", env_name)
+    if not (env_dir / "config.json").is_file():
+        print(f"{constants.ANSI_BLUE}環境が存在しません。作成しています...{constants.ANSI_RESET}")
+        utils.assert_environment_name_is_valid(env_name)
         env = composer_environment.Environment(
-            image_version=from_image_version,
-            project_id=project,
-            location=location,
+            image_version=image_version or composer_settings.COMPOSER_IMAGE_VERSION,
+            project_id=utils.resolve_project_id(project),
+            location=composer_settings.COMPOSER_LOCATION or "asia-northeast1",
             env_dir_path=env_dir,
             port=web_server_port,
-            dags_path=dags_path,
+            dags_path=dags_path or str(pathlib.Path.cwd() / composer_settings.DAGS_PATH),
             database_engine=database_engine,
         )
-    env.create()
-    print(f"{constants.ANSI_GREEN}環境のセットアップを実行しています...{constants.ANSI_RESET}")
-
-@cli.command()
-@optional_environment
-@option_port
-@errors.catch_exceptions()
-def start(environment: Optional[str], web_server_port: Optional[int]) -> None:
-    env_path = files.resolve_environment_path(environment)
+        env.create()
+    env_path = files.resolve_environment_path(env_name)
     env = composer_environment.Environment.load_from_config(env_path, web_server_port)
     env.start_foreground()
-    print(f"{constants.ANSI_GREEN}環境が起動しました。{constants.ANSI_RESET}")
 
 
 @cli.command()
@@ -228,6 +150,25 @@ def stop(environment: Optional[str]) -> None:
 
 @cli.command()
 @optional_environment
+@errors.catch_exceptions()
+def status(environment: Optional[str]) -> None:
+    """環境の一覧と詳細を表示する。"""
+    current_path = pathlib.Path.cwd().resolve()
+    envs = files.get_environment_directories()
+    if not envs:
+        console.get_console().print(constants.ENVIRONMENTS_NOT_FOUND.format(path=current_path))
+        return
+    environments_status = composer_environment.get_environments_status(envs)
+    console.get_console().print(constants.ENVIRONMENTS_FOUND.format(path=current_path))
+    console.get_console().print(utils.get_environment_status_table(environments_status))
+    if environment or len(envs) == 1:
+        env_path = files.resolve_environment_path(environment)
+        env = composer_environment.Environment.load_from_config(env_path, None)
+        env.describe()
+
+
+@cli.command()
+@optional_environment
 @click.option("-f", "--follow", is_flag=True, default=False, help="ログを追尾表示する")
 @click.option(
     "-l",
@@ -239,7 +180,7 @@ def stop(environment: Optional[str]) -> None:
 )
 @errors.catch_exceptions()
 def logs(
-    environment: Optional[str], max_lines: Union[str, int], follow: bool
+    environment: Optional[str], max_lines, follow: bool
 ) -> None:
     print(f"{constants.ANSI_BLUE}ログを表示しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
@@ -247,28 +188,81 @@ def logs(
     env.logs(follow, max_lines)
 
 
-@cli.command(name="list")
+@cli.command(name="run", context_settings=dict(ignore_unknown_options=True))
+@required_environment
+@click.argument("command", nargs=-1, required=True, metavar="COMMAND", type=click.UNPROCESSED)
+@click.pass_context
 @errors.catch_exceptions()
-def list_command():
-    current_path = pathlib.Path.cwd().resolve()
-    envs = files.get_environment_directories()
-    environments_status = composer_environment.get_environments_status(envs)
-    if environments_status:
-        console.get_console().print(constants.ENVIRONMENTS_FOUND.format(path=current_path))
-        table = utils.get_environment_status_table(environments_status)
-        console.get_console().print(table)
-        console.get_console().print(constants.LIST_COMMAND_EPILOG)
-    else:
-        console.get_console().print(constants.ENVIRONMENTS_NOT_FOUND.format(path=current_path))
+def run(ctx, environment: Optional[str], command: List[str]):
+    """コンテナ内で airflow コマンドを実行する。"""
+    if ctx.obj.get("verbose", False):
+        print(
+            f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
+            f"{' '.join(command)}{constants.ANSI_RESET}"
+        )
+    env_path = files.resolve_environment_path(environment)
+    env = composer_environment.Environment.load_from_config(env_path, None)
+    env.run_airflow_command([*command])
 
 
 @cli.command()
 @optional_environment
+@click.option("--settings", "settings_only", is_flag=True, default=False,
+              help="Variables ではなく Composer の設定を composer_settings.py に同期する")
+@click.option("--secret-id", default=None, metavar="SECRET_ID",
+              help="指定時は Secret Manager 経由で Variables を同期する")
+@click.option("-p", "--project", default=None, metavar="PROJECT_ID",
+              help="GCP プロジェクト ID")
+@click.option("-l", "--location", default=composer_settings.COMPOSER_LOCATION,
+              show_default=True, metavar="LOCATION")
+@click.option("-e", "--env-name", "env_name", default=composer_settings.COMPOSER_ENV_NAME,
+              show_default=True, metavar="ENV_NAME",
+              help="同期元の Cloud Composer 環境名")
 @errors.catch_exceptions()
-def describe(environment: Optional[str]) -> None:
+def sync(
+    environment: Optional[str],
+    settings_only: bool,
+    secret_id: Optional[str],
+    project: Optional[str],
+    location: str,
+    env_name: str,
+):
+    """Cloud Composer から Variables（既定）または設定を同期する。"""
+    from composer_local import gcp_sync
+
+    resolved_project = project or composer_settings.PROJECT_ID or gcp_sync.get_project_id()
+    if not resolved_project:
+        raise click.UsageError(
+            "GCP プロジェクト ID を解決できませんでした。--project を指定してください。"
+        )
+    if not env_name and not settings_only:
+        raise click.UsageError(
+            "Cloud Composer 環境名が未設定です。--env-name を指定するか "
+            "composer_settings.py に COMPOSER_ENV_NAME を設定してください。"
+        )
+
+    if settings_only:
+        print(f"{constants.ANSI_BLUE}Cloud Composer の設定を同期しています...{constants.ANSI_RESET}")
+        settings_path = pathlib.Path(__file__).parent / "composer_settings.py"
+        gcp_sync.sync_composer_settings(
+            project_id=resolved_project,
+            location=location,
+            env_name=env_name,
+            settings_file=settings_path,
+        )
+        print(f"{constants.ANSI_GREEN}設定の同期が完了しました: {settings_path}{constants.ANSI_RESET}")
+        return
+
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
-    env.describe()
+    print(f"{constants.ANSI_BLUE}Variables を同期しています...{constants.ANSI_RESET}")
+    if secret_id:
+        gcp_sync.sync_vars_via_secret_manager(
+            env, env_path, resolved_project, location, env_name, secret_id
+        )
+    else:
+        gcp_sync.sync_vars_direct(env, env_path, resolved_project, location, env_name)
+    print(f"{constants.ANSI_GREEN}Variables の同期が完了しました。{constants.ANSI_RESET}")
 
 
 @cli.command()
@@ -321,186 +315,3 @@ def remove(
         env.remove(force, force_error=click.UsageError(constants.USE_FORCE_TO_REMOVE_ERROR))
     shutil.rmtree(env_path)
     print(f"{constants.ANSI_GREEN}環境の削除が完了しました。{constants.ANSI_RESET}")
-
-
-@cli.command(name="run-airflow", context_settings=dict(ignore_unknown_options=True))
-@required_environment
-@click.argument("command", nargs=-1, required=True, metavar="COMMAND", type=click.UNPROCESSED)
-@click.pass_context
-@errors.catch_exceptions()
-def run_airflow_cmd(ctx, environment: Optional[str], command: List[str]):
-    verbose = ctx.obj.get("verbose", False)
-    # Contextual, friendly messages (default quiet)
-    try:
-        subcmd = command[0] if command else ""
-        if subcmd == "users" and len(command) >= 2 and command[1] == "create":
-            msg = (
-                f"{constants.ANSI_BLUE}Web UI 用の管理者ユーザーを"
-                f"作成しています...{constants.ANSI_RESET}"
-            )
-            print(msg)
-        elif (
-            subcmd == "connections"
-            and len(command) >= 4
-            and command[1] == "add"
-            and command[2] == "google_cloud_default"
-        ):
-            msg = f"{constants.ANSI_BLUE}Google Cloud 接続を設定しています...{constants.ANSI_RESET}"
-            print(msg)
-        elif verbose:
-            cmd_str = ' '.join(command)
-            msg = (
-                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
-                f"{cmd_str}{constants.ANSI_RESET}"
-            )
-            print(msg)
-    except Exception as e:
-        LOG.debug(f"出力表示エラー: {e}")
-        # Fallback to verbose banner only
-        if verbose:
-            cmd_str = ' '.join(command)
-            msg = (
-                f"{constants.ANSI_BLUE}Airflowコマンドを実行しています: "
-                f"{cmd_str}{constants.ANSI_RESET}"
-            )
-            print(msg)
-    env_path = files.resolve_environment_path(environment)
-    env = composer_environment.Environment.load_from_config(env_path, None)
-    env.run_airflow_command([*command])
-
-
-@cli.command(name="sync-vars")
-@optional_environment
-@click.option(
-    "-p",
-    "--project",
-    help="使用する Google Cloud プロジェクト ID",
-    show_default="Cloud CLI またはローカル環境設定の値",
-    metavar="PROJECT_ID",
-)
-@click.option(
-    "--secret-id",
-    default=composer_settings.SECRET_ID,
-    help="Airflow Variables の JSON を格納する Secret の ID",
-    show_default=True,
-    metavar="SECRET_ID",
-)
-@errors.catch_exceptions()
-def sync_vars(
-    environment: Optional[str],
-    project: Optional[str],
-    secret_id: str,
-):
-    """Secret Manager からローカル Airflow 環境へ Variables を同期する。
-
-    - 指定（または推定）された GCP プロジェクトの Secret Manager から
-      'secret_id' の最新バージョンを取得
-    - 取得した JSON をローカル環境配下 data/variables.json に保存
-    - Airflow が起動中であれば即時に `airflow variables import` を実行
-      未起動であれば起動時に自動インポートされる
-    """
-    env_path = files.resolve_environment_path(environment)
-    env = composer_environment.Environment.load_from_config(env_path, None)
-
-    resolved_project = project or env.project_id or utils.get_project_id()
-    if not resolved_project:
-        raise click.UsageError(
-            "GCP プロジェクト ID を解決できませんでした。--project を指定してください。"
-        )
-
-    console.get_console().print("Secret Manager から Variables を同期します...")
-    console.get_console().print(f"プロジェクト: {resolved_project}")
-    console.get_console().print(f"シークレット ID: {secret_id}")
-
-    from composer_local import secret_manager_sync
-
-    sync_client = secret_manager_sync.create_sync_client(
-        project_id=resolved_project,
-        local_env_path=env_path,
-    )
-    sync_client.secret_id = secret_id
-
-    variables_json_path = env_path / "data" / "variables.json"
-    imported_successfully = False
-
-    # ---- Step 1: Secret Manager から Variables を取得・書き出し ----
-    try:
-        sync_client.sync_to_local_airflow(env)
-    except Exception as e:
-        console.get_console().print(f"Variables の同期でエラーが発生しました: {e}")
-        raise
-
-    # ---- Step 2: 起動中の Airflow へ即時インポート ----
-    try:
-        if variables_json_path.is_file():
-            status = env.status()
-            if str(status).lower() == str(constants.ContainerStatus.RUNNING):
-                console.get_console().print(
-                    "起動中の Airflow へ Variables をインポートします..."
-                )
-                env.run_airflow_command(
-                    [
-                        "variables",
-                        "import",
-                        "/home/airflow/gcs/data/variables.json",
-                    ]
-                )
-                imported_successfully = True
-            else:
-                console.get_console().print(
-                    "ローカル Airflow が起動していません。次回起動時に自動インポートされます。"
-                )
-    except Exception as e:
-        console.get_console().print(f"Variables のインポートに失敗しました: {e}")
-
-    # ---- Step 3: クリーンアップ（インポート成功時のみ一時ファイルを削除） ----
-    if imported_successfully:
-        try:
-            variables_json_path.unlink()
-            console.get_console().print(
-                "一時ファイル variables.json を削除しました"
-            )
-        except Exception as e:
-            LOG.debug(f"一時ファイル削除失敗: {e}")
-
-    console.get_console().print("Variables の同期が完了しました！")
-
-
-@cli.command(name="sync-settings")
-@click.option(
-    "-p",
-    "--project",
-    help="GCP プロジェクト ID",
-    required=True,
-    metavar="PROJECT_ID",
-)
-@click.option(
-    "-l",
-    "--location",
-    default=composer_settings.COMPOSER_LOCATION,
-    show_default=True,
-    metavar="LOCATION",
-)
-@click.option(
-    "-e",
-    "--env",
-    "env_name",
-    default=composer_settings.COMPOSER_ENV_NAME,
-    show_default=True,
-    metavar="ENV_NAME",
-)
-@errors.catch_exceptions()
-def sync_settings(project: str, location: str, env_name: str):
-    """Cloud Composer の設定をローカルに同期します。"""
-    msg = "Cloud Composer の設定を composer_settings.py に同期しています..."
-    print(f"{constants.ANSI_BLUE}{msg}{constants.ANSI_RESET}")
-    from composer_local.sync_settings import sync_composer_settings
-
-    settings_path = pathlib.Path(__file__).parent / "composer_settings.py"
-    sync_composer_settings(
-        project_id=project,
-        location=location,
-        env_name=env_name,
-        settings_file=settings_path,
-    )
-    print(f"{constants.ANSI_GREEN}設定の同期が完了しました: {settings_path}{constants.ANSI_RESET}")
