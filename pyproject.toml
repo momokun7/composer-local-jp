@@ -68,7 +68,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0", "pre-commit>=4.0.0"]
+dev = ["ruff>=0.8.0", "pytest>=8.0.0", "pytest-cov>=6.0.0", "pre-commit>=4.0.0", "pyright>=1.1.390"]
 
 [tool.hatch.version]
 path = "composer_local/version.py"
