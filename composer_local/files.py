@@ -11,9 +11,7 @@ def resolve_environment_path(env_name: Optional[str]) -> pathlib.Path:
     env_dir = (pathlib.Path.cwd() / "composer").resolve()
     if not env_dir.is_dir():
         raise errors.ComposerCliError(
-            constants.ENVIRONMENT_DIR_NOT_FOUND_ERROR.format(
-                env_dir=env_dir
-            )
+            constants.ENVIRONMENT_DIR_NOT_FOUND_ERROR.format(env_dir=env_dir)
         )
 
     envs = get_available_environments(env_dir)
@@ -22,20 +20,14 @@ def resolve_environment_path(env_name: Optional[str]) -> pathlib.Path:
         "\n    ".join(str(env) for env in envs),
     )
     if not envs:
-        raise errors.ComposerCliError(
-            constants.ENVIRONMENT_DIR_EMPTY_ERROR.format(
-                env_dir=env_dir
-            )
-        )
+        raise errors.ComposerCliError(constants.ENVIRONMENT_DIR_EMPTY_ERROR.format(env_dir=env_dir))
 
     if env_name:
         LOG.info("Searching for provided local environment name: %s", env_name)
         env_path = env_dir / env_name
         if not env_path.is_dir():
             raise errors.ComposerCliError(
-                constants.ENVIRONMENT_PATH_NOT_FOUND_ERROR.format(
-                    env_path=env_path
-                )
+                constants.ENVIRONMENT_PATH_NOT_FOUND_ERROR.format(env_path=env_path)
             )
         return env_path
     else:

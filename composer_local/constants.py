@@ -99,7 +99,7 @@ ENVIRONMENT_NOT_SELECTED_ERROR = (
     "既存のいずれかの環境を選択するため、引数に環境名を指定してください:\n    {env_names}"
 )
 GCLOUD_CONFIG_NOT_FOUND_ERROR = (
-    "gcloud の設定場所を解決できませんでした。" "CLOUDSDK_CONFIG 環境変数で上書きしてください。"
+    "gcloud の設定場所を解決できませんでした。CLOUDSDK_CONFIG 環境変数で上書きしてください。"
 )
 ENV_NOT_RUNNING = "コマンドの実行に失敗しました：環境が起動していません。"
 MISSING_REQUIRED_PARAM_ERROR = "必須パラメータ '{param}' が 'config.json' に存在しません。"
@@ -157,8 +157,8 @@ COMPOSER_3_REQUIRES_POSTGRESQL = (
 )
 
 # Docker ヘルスチェック設定（ナノ秒）
-HEALTHCHECK_INTERVAL_NS = 5_000_000_000      # 5秒
-HEALTHCHECK_TIMEOUT_NS = 5_000_000_000        # 5秒
+HEALTHCHECK_INTERVAL_NS = 5_000_000_000  # 5秒
+HEALTHCHECK_TIMEOUT_NS = 5_000_000_000  # 5秒
 HEALTHCHECK_RETRIES = 5
-HEALTHCHECK_START_PERIOD_DB_NS = 10_000_000_000    # 10秒
-HEALTHCHECK_START_PERIOD_APP_NS = 30_000_000_000   # 30秒
+HEALTHCHECK_START_PERIOD_DB_NS = 10_000_000_000  # 10秒
+HEALTHCHECK_START_PERIOD_APP_NS = 30_000_000_000  # 30秒

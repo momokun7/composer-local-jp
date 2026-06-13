@@ -75,7 +75,10 @@ class TestRunCommand:
     def test_failed_command_raises_runtime_error(self, mock_run):
         """コマンドが失敗した場合、RuntimeError が発生する."""
         mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=1, cmd=["gcloud", "test"], output="some output", stderr="some error",
+            returncode=1,
+            cmd=["gcloud", "test"],
+            output="some output",
+            stderr="some error",
         )
         with pytest.raises(RuntimeError, match="コマンドの実行に失敗しました"):
             run_command(["gcloud", "test"])
@@ -84,7 +87,10 @@ class TestRunCommand:
     def test_failed_command_includes_stderr(self, mock_run):
         """エラー時にstderr情報が含まれる."""
         mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=2, cmd=["gcloud", "test"], output="", stderr="permission denied",
+            returncode=2,
+            cmd=["gcloud", "test"],
+            output="",
+            stderr="permission denied",
         )
         with pytest.raises(RuntimeError, match="permission denied"):
             run_command(["gcloud", "test"])
@@ -109,9 +115,7 @@ class TestExportVariablesViaGcloud:
     def test_json_with_extra_output(self, mock_run_command):
         """gcloud の余計な出力が混ざっても JSON を抽出できる."""
         mock_run_command.return_value = (
-            "kubeconfig entry generated for my-env.\n"
-            '{"key1": "value1"}\n'
-            "Operation completed."
+            'kubeconfig entry generated for my-env.\n{"key1": "value1"}\nOperation completed.'
         )
         assert export_variables_via_gcloud("p", "l", "e") == {"key1": "value1"}
 
@@ -667,7 +671,10 @@ class TestSyncComposerSettings:
     def test_sync_passes_correct_arguments(self, mock_fetch, tmp_path):
         """正しい引数が fetch_composer_env_details に渡される."""
         mock_fetch.return_value = {
-            "env_name": "env", "location": "loc", "image_version": "v", "python_version": "",
+            "env_name": "env",
+            "location": "loc",
+            "image_version": "v",
+            "python_version": "",
         }
         settings_path = tmp_path / "settings.py"
         sync_composer_settings("project-id", "us-west1", "env-name", settings_path)
@@ -694,9 +701,7 @@ class TestGetProjectId:
     def test_returns_project_id(self, mock_run):
         """gcloud 設定から project id を取得できる."""
         mock_run.return_value = MagicMock(
-            stdout=json.dumps(
-                {"configuration": {"properties": {"core": {"project": "my-proj"}}}}
-            )
+            stdout=json.dumps({"configuration": {"properties": {"core": {"project": "my-proj"}}}})
         )
         assert gcp_sync.get_project_id() == "my-proj"
 
@@ -735,13 +740,17 @@ class TestGetAuthInfo:
     def test_returns_service_account_from_adc(self, mock_path, mock_run, tmp_path):
         """impersonated_service_account の ADC からサービスアカウントを抽出する."""
         adc = tmp_path / "application_default_credentials.json"
-        adc.write_text(json.dumps({
-            "type": "impersonated_service_account",
-            "service_account_impersonation_url": (
-                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
-                "sa@proj.iam.gserviceaccount.com:generateAccessToken"
-            ),
-        }))
+        adc.write_text(
+            json.dumps(
+                {
+                    "type": "impersonated_service_account",
+                    "service_account_impersonation_url": (
+                        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+                        "sa@proj.iam.gserviceaccount.com:generateAccessToken"
+                    ),
+                }
+            )
+        )
         mock_path.return_value = str(tmp_path)
         result = gcp_sync.get_auth_info()
         assert result["type"] == "service_account"

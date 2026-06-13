@@ -74,6 +74,8 @@ required_environment = click.argument(
 optional_environment = click.argument(
     "environment", required=False, metavar="LOCAL_ENVIRONMENT_NAME"
 )
+
+
 @cli.command()
 @optional_environment
 @option_port
@@ -179,9 +181,7 @@ def status(environment: Optional[str]) -> None:
     metavar="MAX_LINES",
 )
 @errors.catch_exceptions()
-def logs(
-    environment: Optional[str], max_lines, follow: bool
-) -> None:
+def logs(environment: Optional[str], max_lines, follow: bool) -> None:
     print(f"{constants.ANSI_BLUE}ログを表示しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
     env = composer_environment.Environment.load_from_config(env_path, None)
@@ -207,17 +207,36 @@ def run(ctx, environment: Optional[str], command: List[str]):
 
 @cli.command()
 @optional_environment
-@click.option("--settings", "settings_only", is_flag=True, default=False,
-              help="Variables ではなく Composer の設定を composer_settings.py に同期する")
-@click.option("--secret-id", default=None, metavar="SECRET_ID",
-              help="指定時は Secret Manager 経由で Variables を同期する")
-@click.option("-p", "--project", default=None, metavar="PROJECT_ID",
-              help="GCP プロジェクト ID")
-@click.option("-l", "--location", default=composer_settings.COMPOSER_LOCATION,
-              show_default=True, metavar="LOCATION")
-@click.option("-e", "--env-name", "env_name", default=composer_settings.COMPOSER_ENV_NAME,
-              show_default=True, metavar="ENV_NAME",
-              help="同期元の Cloud Composer 環境名")
+@click.option(
+    "--settings",
+    "settings_only",
+    is_flag=True,
+    default=False,
+    help="Variables ではなく Composer の設定を composer_settings.py に同期する",
+)
+@click.option(
+    "--secret-id",
+    default=None,
+    metavar="SECRET_ID",
+    help="指定時は Secret Manager 経由で Variables を同期する",
+)
+@click.option("-p", "--project", default=None, metavar="PROJECT_ID", help="GCP プロジェクト ID")
+@click.option(
+    "-l",
+    "--location",
+    default=composer_settings.COMPOSER_LOCATION,
+    show_default=True,
+    metavar="LOCATION",
+)
+@click.option(
+    "-e",
+    "--env-name",
+    "env_name",
+    default=composer_settings.COMPOSER_ENV_NAME,
+    show_default=True,
+    metavar="ENV_NAME",
+    help="同期元の Cloud Composer 環境名",
+)
 @errors.catch_exceptions()
 def sync(
     environment: Optional[str],
@@ -242,7 +261,9 @@ def sync(
         )
 
     if settings_only:
-        print(f"{constants.ANSI_BLUE}Cloud Composer の設定を同期しています...{constants.ANSI_RESET}")
+        print(
+            f"{constants.ANSI_BLUE}Cloud Composer の設定を同期しています...{constants.ANSI_RESET}"
+        )
         settings_path = pathlib.Path(__file__).parent / "composer_settings.py"
         gcp_sync.sync_composer_settings(
             project_id=resolved_project,
@@ -250,7 +271,9 @@ def sync(
             env_name=env_name,
             settings_file=settings_path,
         )
-        print(f"{constants.ANSI_GREEN}設定の同期が完了しました: {settings_path}{constants.ANSI_RESET}")
+        print(
+            f"{constants.ANSI_GREEN}設定の同期が完了しました: {settings_path}{constants.ANSI_RESET}"
+        )
         return
 
     env_path = files.resolve_environment_path(environment)
@@ -280,9 +303,7 @@ def sync(
     help="実行中でも強制的に削除する",
 )
 @errors.catch_exceptions()
-def remove(
-    environment: Optional[str], skip_confirmation: bool, force: bool
-) -> None:
+def remove(environment: Optional[str], skip_confirmation: bool, force: bool) -> None:
     print(f"{constants.ANSI_YELLOW}環境を削除しています...{constants.ANSI_RESET}")
     env_path = files.resolve_environment_path(environment)
     if not skip_confirmation:
@@ -301,6 +322,7 @@ def remove(
             # フォールバックとして docker CLI を直接呼び出し、
             # コンテナを強制削除する。
             import subprocess
+
             env_name = env_path.name
             container_names = [
                 f"{constants.CONTAINER_NAME}-{env_name}",

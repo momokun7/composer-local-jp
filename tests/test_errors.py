@@ -19,27 +19,19 @@ class TestErrorHierarchy:
 
     def test_environment_not_found_error_is_composer_cli_error(self):
         """EnvironmentNotFoundError は ComposerCliError のサブクラスである."""
-        assert issubclass(
-            errors.EnvironmentNotFoundError, errors.ComposerCliError
-        )
+        assert issubclass(errors.EnvironmentNotFoundError, errors.ComposerCliError)
 
     def test_environment_not_found_error_is_not_environment_not_running_error(self):
         """EnvironmentNotFoundError は EnvironmentNotRunningError のサブクラスではない."""
-        assert not issubclass(
-            errors.EnvironmentNotFoundError, errors.EnvironmentNotRunningError
-        )
+        assert not issubclass(errors.EnvironmentNotFoundError, errors.EnvironmentNotRunningError)
 
     def test_environment_not_running_error_is_composer_cli_error(self):
         """EnvironmentNotRunningError は ComposerCliError のサブクラスである."""
-        assert issubclass(
-            errors.EnvironmentNotRunningError, errors.ComposerCliError
-        )
+        assert issubclass(errors.EnvironmentNotRunningError, errors.ComposerCliError)
 
     def test_invalid_configuration_error_is_composer_cli_error(self):
         """InvalidConfigurationError は ComposerCliError のサブクラスである."""
-        assert issubclass(
-            errors.InvalidConfigurationError, errors.ComposerCliError
-        )
+        assert issubclass(errors.InvalidConfigurationError, errors.ComposerCliError)
 
     def test_missing_required_parameter_error_is_invalid_configuration_error(self):
         """MissingRequiredParameterError は InvalidConfigurationError のサブクラスである."""
