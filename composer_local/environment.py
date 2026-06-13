@@ -252,6 +252,7 @@ class Environment:
         print("Ctrl+C で停止します...")
 
         stopped = False
+
         def stop_containers():
             nonlocal stopped
             if stopped:
@@ -273,11 +274,11 @@ class Environment:
         try:
             now = int(time.time())
             for log_line in app.logs(stream=True, follow=True, since=now):
-                line = log_line.decode('utf-8').rstrip()
+                line = log_line.decode("utf-8").rstrip()
                 if not line:
                     continue
                 line_upper = line.upper()
-                if any(p in line_upper for p in (' ERROR ', '[ERROR]', ' WARNING ', '[WARNING]')):
+                if any(p in line_upper for p in (" ERROR ", "[ERROR]", " WARNING ", "[WARNING]")):
                     print(line)
         except (KeyboardInterrupt, BrokenPipeError, OSError, EOFError):
             stop_containers()
@@ -314,12 +315,12 @@ class Environment:
 
         output = result.output.decode()
         filtered_lines = []
-        for line in output.split('\n'):
+        for line in output.split("\n"):
             if any(phrase in line for phrase in constants.AIRFLOW_LOG_SKIP_PHRASES):
                 continue
             filtered_lines.append(line)
 
-        filtered_output = '\n'.join(filtered_lines).strip()
+        filtered_output = "\n".join(filtered_lines).strip()
         if filtered_output:
             console.get_console().print(filtered_output)
 
@@ -342,9 +343,7 @@ class Environment:
                     auth_check["auth_info"]["description"], True
                 )
             else:
-                auth_status = utils.wrap_auth_status_in_color(
-                    auth_check["error_message"], False
-                )
+                auth_status = utils.wrap_auth_status_in_color(auth_check["error_message"], False)
         except Exception:
             auth_status = "ローカル専用モード（GCP 未設定）"
             gcloud_path = ""
@@ -398,13 +397,17 @@ class Environment:
         """Google Cloud のデフォルト接続を設定する。成功時 True を返す。"""
         return self._run_airflow_setup_command(
             [
-                "connections", "add",
+                "connections",
+                "add",
                 "google_cloud_default",
-                "--conn-type", "google_cloud_platform",
-                "--conn-extra", json.dumps({
-                    "extra__google_cloud_platform__scope":
-                        "https://www.googleapis.com/auth/cloud-platform",
-                }),
+                "--conn-type",
+                "google_cloud_platform",
+                "--conn-extra",
+                json.dumps(
+                    {
+                        "extra__google_cloud_platform__scope": "https://www.googleapis.com/auth/cloud-platform",
+                    }
+                ),
             ],
             description="Google Cloud 接続の設定",
         )
@@ -413,13 +416,20 @@ class Environment:
         """Admin ユーザーを作成する。成功時 True を返す。"""
         return self._run_airflow_setup_command(
             [
-                "users", "create",
-                "--role", "Admin",
-                "--username", composer_settings.ADMIN_USERNAME,
-                "--password", composer_settings.ADMIN_PASSWORD,
-                "--email", composer_settings.ADMIN_EMAIL,
-                "--firstname", composer_settings.ADMIN_FIRSTNAME,
-                "--lastname", composer_settings.ADMIN_LASTNAME,
+                "users",
+                "create",
+                "--role",
+                "Admin",
+                "--username",
+                composer_settings.ADMIN_USERNAME,
+                "--password",
+                composer_settings.ADMIN_PASSWORD,
+                "--email",
+                composer_settings.ADMIN_EMAIL,
+                "--firstname",
+                composer_settings.ADMIN_FIRSTNAME,
+                "--lastname",
+                composer_settings.ADMIN_LASTNAME,
             ],
             description="Admin ユーザーの作成",
         )

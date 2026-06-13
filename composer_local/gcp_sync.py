@@ -26,9 +26,7 @@ _CLOUD_CLI_WINDOWS_COMMAND = "gcloud.cmd"
 _CLOUD_CLI_CONFIG_COMMAND = "config config-helper --format json"
 
 _GCP_INSTALL_HINT = (
-    "GCP 連携機能には追加パッケージが必要です。\n"
-    "  uv sync --extra gcp\n"
-    "を実行してください。"
+    "GCP 連携機能には追加パッケージが必要です。\n  uv sync --extra gcp\nを実行してください。"
 )
 
 
@@ -118,7 +116,7 @@ def get_auth_info() -> Dict[str, str]:
 
         if adc_path.exists():
             try:
-                with open(adc_path, 'r') as f:
+                with open(adc_path, "r") as f:
                     adc_data = json.load(f)
 
                 # impersonated_service_account の場合はサービスアカウントの権限借用
@@ -204,25 +202,40 @@ def check_auth_validity() -> Dict[str, Any]:
     try:
         project = subprocess.run(
             [gcloud_cmd(), "config", "get-value", "project"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
         if not project:
-            return _auth_result(auth_info, "プロジェクトが設定されていません", [
-                "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
-                "make auth-user を実行して認証を行ってください",
-            ])
+            return _auth_result(
+                auth_info,
+                "プロジェクトが設定されていません",
+                [
+                    "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
+                    "make auth-user を実行して認証を行ってください",
+                ],
+            )
 
         subprocess.run(
             [gcloud_cmd(), "auth", "print-access-token"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
 
         if auth_info.get("type") == "service_account":
             subprocess.run(
-                [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy",
-                 auth_info.get("account", "")],
-                check=True, capture_output=True, text=True,
+                [
+                    gcloud_cmd(),
+                    "iam",
+                    "service-accounts",
+                    "get-iam-policy",
+                    auth_info.get("account", ""),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
             )
 
         return _auth_result(auth_info)
@@ -234,8 +247,10 @@ def check_auth_validity() -> Dict[str, Any]:
             auth_info,
             "gcloudコマンドが見つかりません"
             "（Google Cloud SDKがインストールされていない可能性があります）",
-            ["Google Cloud SDKをインストールしてください",
-             "https://cloud.google.com/sdk/docs/install を参照してください"],
+            [
+                "Google Cloud SDKをインストールしてください",
+                "https://cloud.google.com/sdk/docs/install を参照してください",
+            ],
         )
     except Exception as e:
         return _auth_result(auth_info, f"予期しないエラーが発生しました: {e}")
@@ -293,8 +308,7 @@ def run_parallel_container_commands(
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_run_single, label, cmd): label
-            for label, cmd in commands.items()
+            executor.submit(_run_single, label, cmd): label for label, cmd in commands.items()
         }
         for future in as_completed(futures):
             _, success = future.result()
@@ -383,9 +397,7 @@ def export_variables_via_gcloud(project: str, location: str, env_name: str) -> d
     start = out.find("{")
     end = out.rfind("}")
     if start == -1 or end == -1 or end < start:
-        raise RuntimeError(
-            "Composer の出力から JSON の抽出に失敗しました。rawの出力:\n" + out
-        )
+        raise RuntimeError("Composer の出力から JSON の抽出に失敗しました。rawの出力:\n" + out)
     payload = out[start : end + 1]
     data = json.loads(payload)
     if not isinstance(data, dict):
@@ -475,7 +487,10 @@ class SecretManagerSync:
             if not recoverable:
                 LOG.error(f"Secret 更新エラー {sid}: {e}")
                 raise errors.ComposerCliError(f"Secret の更新に失敗しました {sid}: {e}")
-            print(f"{constants.ANSI_YELLOW}Secret が存在しないため、新規作成します{constants.ANSI_RESET}")
+            print(
+                f"{constants.ANSI_YELLOW}Secret が存在しないため、新規作成します"
+                f"{constants.ANSI_RESET}"
+            )
             client.create_secret(
                 request={
                     "parent": parent,
@@ -581,13 +596,13 @@ class SecretManagerSync:
         for key, value in changes["added"].items():
             masked_value = mask_value(value)
             diff_lines.append(f"{constants.ANSI_GREEN}+{constants.ANSI_RESET} {key}")
-            diff_lines.append(f"  {constants.ANSI_GREEN}+ \"{masked_value}\"{constants.ANSI_RESET}")
+            diff_lines.append(f'  {constants.ANSI_GREEN}+ "{masked_value}"{constants.ANSI_RESET}')
 
         # 削除された変数（赤色）
         for key, value in changes["removed"].items():
             masked_value = mask_value(value)
             diff_lines.append(f"{constants.ANSI_RED}-{constants.ANSI_RESET} {key}")
-            diff_lines.append(f"  {constants.ANSI_RED}- \"{masked_value}\"{constants.ANSI_RESET}")
+            diff_lines.append(f'  {constants.ANSI_RED}- "{masked_value}"{constants.ANSI_RESET}')
 
         # 変更された変数（黄色）
         for key, change_info in changes["modified"].items():
@@ -596,8 +611,8 @@ class SecretManagerSync:
             old_masked = mask_value(old_value)
             new_masked = mask_value(new_value)
             diff_lines.append(f"{constants.ANSI_YELLOW}~{constants.ANSI_RESET} {key}")
-            diff_lines.append(f"  {constants.ANSI_RED}- \"{old_masked}\"{constants.ANSI_RESET}")
-            diff_lines.append(f"  {constants.ANSI_GREEN}+ \"{new_masked}\"{constants.ANSI_RESET}")
+            diff_lines.append(f'  {constants.ANSI_RED}- "{old_masked}"{constants.ANSI_RESET}')
+            diff_lines.append(f'  {constants.ANSI_GREEN}+ "{new_masked}"{constants.ANSI_RESET}')
 
         return "\n".join(diff_lines)
 
@@ -676,12 +691,12 @@ class SecretManagerSync:
                 result = app.exec_run(cmd=cmd)
 
                 if result.exit_code == 0:
-                    variables_output = result.output.decode('utf-8')
+                    variables_output = result.output.decode("utf-8")
                     # 変数名を抽出（空行やヘッダーを除く）
                     variable_names = []
-                    for line in variables_output.split('\n'):
+                    for line in variables_output.split("\n"):
                         line = line.strip()
-                        if line and not line.startswith('Key') and not line.startswith('---'):
+                        if line and not line.startswith("Key") and not line.startswith("---"):
                             # 最初の列（変数名）を取得
                             var_name = line.split()[0] if line.split() else None
                             if var_name:
@@ -752,7 +767,7 @@ def fetch_composer_env_details(project_id: str, location: str, env_name: str) ->
 
 def _update_setting(content: str, key: str, value: str) -> str:
     """既存の設定ファイル内の特定のキーの値を更新する。キーが存在しない場合は末尾に追加する。"""
-    pattern = re.compile(rf'^({key}\s*=\s*).*$', re.MULTILINE)
+    pattern = re.compile(rf"^({key}\s*=\s*).*$", re.MULTILINE)
     new_line = f'{key} = "{value}"'
     if pattern.search(content):
         return pattern.sub(new_line, content)
@@ -815,9 +830,7 @@ def _write_and_import(env, env_path: Path, variables: Dict[str, str]) -> None:
     variables_file.parent.mkdir(parents=True, exist_ok=True)
     variables_file.write_text(json.dumps(variables, indent=2, ensure_ascii=False))
     if env.status() == constants.ContainerStatus.RUNNING:
-        env.run_airflow_command(
-            ["variables", "import", "/home/airflow/gcs/data/variables.json"]
-        )
+        env.run_airflow_command(["variables", "import", "/home/airflow/gcs/data/variables.json"])
         variables_file.unlink(missing_ok=True)
         print(f"起動中の Airflow に {len(variables)} 件の Variables をインポートしました")
     else:
@@ -828,7 +841,9 @@ def sync_vars_direct(env, env_path: Path, project: str, location: str, env_name:
     """Cloud Composer から Variables を直接取得してローカルへ反映する（Secret Manager 不使用）。"""
     variables = export_variables_via_gcloud(project, location, env_name)
     if not variables:
-        print(f"{constants.ANSI_YELLOW}Composer に Variables が見つかりません{constants.ANSI_RESET}")
+        print(
+            f"{constants.ANSI_YELLOW}Composer に Variables が見つかりません{constants.ANSI_RESET}"
+        )
         return
     _write_and_import(env, env_path, variables)
 
@@ -838,9 +853,7 @@ def sync_vars_via_secret_manager(
 ) -> None:
     """Composer → Secret Manager → ローカルの順に Variables を同期する。"""
     variables = export_variables_via_gcloud(project, location, env_name)
-    client = SecretManagerSync(
-        project_id=project, local_env_path=env_path, secret_id=secret_id
-    )
+    client = SecretManagerSync(project_id=project, local_env_path=env_path, secret_id=secret_id)
     changes = client.compare_variables(variables)
     if changes["has_changes"]:
         client.update_secret(secret_id, json.dumps(variables, ensure_ascii=False))

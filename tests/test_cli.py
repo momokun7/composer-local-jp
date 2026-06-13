@@ -219,21 +219,23 @@ class TestSyncCommand:
 
     def test_uses_secret_manager_when_secret_id_given(self, tmp_path):
         """--secret-id 指定時は sync_vars_via_secret_manager が呼ばれる."""
-        with patch("composer_local.gcp_sync.sync_vars_via_secret_manager") as mock_sm, \
-             patch("composer_local.files.resolve_environment_path") as mock_path, \
-             patch("composer_local.environment.Environment.load_from_config"):
+        with (
+            patch("composer_local.gcp_sync.sync_vars_via_secret_manager") as mock_sm,
+            patch("composer_local.files.resolve_environment_path") as mock_path,
+            patch("composer_local.environment.Environment.load_from_config"),
+        ):
             mock_path.return_value = tmp_path
-            result = _invoke(
-                "sync", "--secret-id", "my-secret", "-p", "proj", "-e", "comp-env"
-            )
+            result = _invoke("sync", "--secret-id", "my-secret", "-p", "proj", "-e", "comp-env")
             assert result.exit_code == 0, result.output
             assert mock_sm.called
 
     def test_uses_direct_sync_without_secret_id(self, tmp_path):
         """--secret-id 未指定時は sync_vars_direct が呼ばれる."""
-        with patch("composer_local.gcp_sync.sync_vars_direct") as mock_direct, \
-             patch("composer_local.files.resolve_environment_path") as mock_path, \
-             patch("composer_local.environment.Environment.load_from_config"):
+        with (
+            patch("composer_local.gcp_sync.sync_vars_direct") as mock_direct,
+            patch("composer_local.files.resolve_environment_path") as mock_path,
+            patch("composer_local.environment.Environment.load_from_config"),
+        ):
             mock_path.return_value = tmp_path
             result = _invoke("sync", "-p", "proj", "-e", "comp-env")
             assert result.exit_code == 0, result.output

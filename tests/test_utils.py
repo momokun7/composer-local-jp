@@ -104,17 +104,13 @@ class TestGetAirflowComposerVersions:
 
     def test_composer2_airflow2(self):
         """Composer 2.x 系 + Airflow 2.x 系の標準的なバージョン文字列."""
-        airflow_v, composer_v = utils.get_airflow_composer_versions(
-            "composer-2.9.7-airflow-2.9.3"
-        )
+        airflow_v, composer_v = utils.get_airflow_composer_versions("composer-2.9.7-airflow-2.9.3")
         assert airflow_v == "2.9.3"
         assert composer_v == "2.9.7"
 
     def test_composer3_airflow2(self):
         """Composer 3 + Airflow 2.x 系のバージョン文字列."""
-        airflow_v, composer_v = utils.get_airflow_composer_versions(
-            "composer-3-airflow-2.10.2"
-        )
+        airflow_v, composer_v = utils.get_airflow_composer_versions("composer-3-airflow-2.10.2")
         assert airflow_v == "2.10.2"
         assert composer_v == "3"
 
@@ -151,9 +147,7 @@ class TestGetAirflowComposerVersions:
     def test_invalid_format_zero_prefix(self):
         """Composer バージョンが 0 始まりでエラー."""
         with pytest.raises(errors.ComposerCliError):
-            utils.get_airflow_composer_versions(
-                "composer-0.1.0-airflow-2.9.3"
-            )
+            utils.get_airflow_composer_versions("composer-0.1.0-airflow-2.9.3")
 
 
 class TestResolveProjectId:

@@ -103,9 +103,7 @@ def build_mounts(env, include_db: bool):
             docker.types.Mount(
                 source=str(src),
                 target=(
-                    target
-                    if str(target).startswith("/")
-                    else f"{constants.AIRFLOW_HOME}/{target}"
+                    target if str(target).startswith("/") else f"{constants.AIRFLOW_HOME}/{target}"
                 ),
                 type="bind",
             )
@@ -122,9 +120,7 @@ def build_db_env() -> Dict[str, str]:
     }
 
 
-def get_container(
-    env, name: str, assert_running: bool = False, ignore_not_found: bool = False
-):
+def get_container(env, name: str, assert_running: bool = False, ignore_not_found: bool = False):
     try:
         c = env.docker_client.containers.get(name)
         if assert_running and c.status != constants.ContainerStatus.RUNNING:
@@ -228,7 +224,9 @@ def ensure_containers_running(env) -> Tuple:
     net = get_network(env, create=True)
 
     # DBコンテナの取得/作成/起動
-    db = get_container(env, env.db_container_name, ignore_not_found=True) or create_db_container(env)
+    db = get_container(env, env.db_container_name, ignore_not_found=True) or create_db_container(
+        env
+    )
     if db.status != constants.ContainerStatus.RUNNING:
         db.start()
     ensure_attached(net, db)
@@ -291,8 +289,13 @@ def wait_for_db_ready(db, timeout_seconds: int = 60, interval_seconds: int = 2) 
         # ヘルスチェック未設定の場合は exec で直接確認する
         if health is None:
             result = db.exec_run(
-                ["pg_isready", "-U", composer_settings.POSTGRES_USER,
-                 "-d", composer_settings.POSTGRES_DB]
+                [
+                    "pg_isready",
+                    "-U",
+                    composer_settings.POSTGRES_USER,
+                    "-d",
+                    composer_settings.POSTGRES_DB,
+                ]
             )
             return result.exit_code == 0
         return False
