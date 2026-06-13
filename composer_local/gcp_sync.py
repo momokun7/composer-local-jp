@@ -45,8 +45,8 @@ def require_gcp_secret_manager():
         ImportError: パッケージが未インストールの場合
     """
     try:
-        from google.auth.exceptions import DefaultCredentialsError
-        from google.cloud import secretmanager
+        from google.auth.exceptions import DefaultCredentialsError  # type: ignore[import-not-found]
+        from google.cloud import secretmanager  # type: ignore[import-not-found]
     except ImportError as _err:
         raise ImportError(_GCP_INSTALL_HINT) from _err
     return secretmanager, DefaultCredentialsError
@@ -62,7 +62,7 @@ def require_gcp_composer():
         ImportError: パッケージが未インストールの場合
     """
     try:
-        from google.cloud.orchestration.airflow import service_v1
+        from google.cloud.orchestration.airflow import service_v1  # type: ignore[import-not-found]
     except ImportError as _err:
         raise ImportError(_GCP_INSTALL_HINT) from _err
     return service_v1
@@ -90,7 +90,7 @@ def get_project_id() -> Optional[str]:
         LOG.debug("Cloud CLI output: %s", output)
     except (subprocess.CalledProcessError, OSError, IOError) as err:
         logging.debug("Failed to get project ID from the Cloud CLI.", exc_info=True)
-        raise errors.InvalidAuthError(err)
+        raise errors.InvalidAuthError(str(err))
 
     try:
         configuration = json.loads(output)

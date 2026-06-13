@@ -56,10 +56,10 @@ def get_environment_directories() -> List[pathlib.Path]:
 def resolve_dags_path(dags_path: Optional[str], env_dir: pathlib.Path) -> str:
     if dags_path is None:
         console.get_console().print(constants.DAGS_PATH_NOT_PROVIDED_WARN)
-        dags_path = env_dir / "dags"
+        resolved = env_dir / "dags"
     else:
-        dags_path = pathlib.Path(dags_path)
-    return str(dags_path.resolve())
+        resolved = pathlib.Path(dags_path)
+    return str(resolved.resolve())
 
 
 def create_environment_directories(env_dir: pathlib.Path, dags_path: str):
@@ -72,10 +72,10 @@ def create_environment_directories(env_dir: pathlib.Path, dags_path: str):
     env_dir.mkdir(exist_ok=True, parents=True)
     for sub_dir in env_dirs:
         (env_dir / sub_dir).mkdir(exist_ok=True)
-    dags_path = pathlib.Path(dags_path)
-    if not dags_path.is_dir():
-        console.get_console().print(constants.CREATING_DAGS_PATH_WARN.format(dags_path=dags_path))
-        dags_path.mkdir(parents=True)
+    dags_dir = pathlib.Path(dags_path)
+    if not dags_dir.is_dir():
+        console.get_console().print(constants.CREATING_DAGS_PATH_WARN.format(dags_path=dags_dir))
+        dags_dir.mkdir(parents=True)
 
 
 def get_available_environments(composer_dir: pathlib.Path):

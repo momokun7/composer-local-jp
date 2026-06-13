@@ -31,6 +31,7 @@ dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-cov>=6.0.0,<7.0.0",
     "pre-commit>=4.0.0",
+    "pyright>=1.1.390",
 ]
 
 [tool.ruff]
@@ -54,6 +55,13 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=composer_local --cov-report=term-missing"
+
+[tool.pyright]
+include = ["composer_local"]
+pythonVersion = "3.11"
+# composer_settings は実体が gitignore 済みでスタブ(.pyi)のみ、docker は型スタブが
+# ソースと分離しているため、ソース不在の警告は無効化する（実行時は問題なし）
+reportMissingModuleSource = "none"
 
 [build-system]
 requires = ["hatchling"]

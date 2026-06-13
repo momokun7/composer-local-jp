@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import docker
+from docker import errors as docker_errors
 
 from composer_local import composer_settings, console, constants, docker_ops, errors, files, utils
 
@@ -42,7 +43,7 @@ class EnvironmentConfig:
         try:
             return json.loads(path.read_text())
         except json.JSONDecodeError as err:
-            raise errors.FailedToParseConfigError(path, err)
+            raise errors.FailedToParseConfigError(str(path), str(err))
 
     def _get_str(self, name: str):
         try:
@@ -125,8 +126,8 @@ class Environment:
     def _get_client(self):
         try:
             return docker.from_env()
-        except docker.errors.DockerException as err:
-            raise errors.DockerNotAvailableError(err)
+        except docker_errors.DockerException as err:
+            raise errors.DockerNotAvailableError(str(err))
 
     def _image_tag(self) -> str:
         airflow_v, composer_v = utils.get_airflow_composer_versions(self.image_version)
@@ -297,23 +298,26 @@ class Environment:
 
     def logs(self, follow: bool, max_lines):
         app = docker_ops.get_container(self, self.container_name, assert_running=True)
+        # assert_running=True のため存在が保証される（無ければ get_container が送出）
+        assert app is not None
         stream = app.logs(timestamps=True, stream=follow, follow=follow, tail=max_lines)
         if follow:
             for line in stream:
-                console.get_console().print(line.decode("utf-8").strip())
+                console.get_console().print(line.decode("utf-8").strip())  # type: ignore[union-attr]
         else:
-            for line in stream.decode("utf-8").split("\n"):
+            for line in stream.decode("utf-8").split("\n"):  # type: ignore[union-attr]
                 console.get_console().print(line)
 
     def run_airflow_command(self, command: List, quiet: bool = False) -> None:
         app = docker_ops.get_container(self, self.container_name, assert_running=True)
+        assert app is not None
         cmd = ["/home/airflow/run_as_user.sh", "airflow", *command]
         result = app.exec_run(cmd=cmd)
 
         if quiet:
             return
 
-        output = result.output.decode()
+        output = result.output.decode()  # type: ignore[union-attr]
         filtered_lines = []
         for line in output.split("\n"):
             if any(phrase in line for phrase in constants.AIRFLOW_LOG_SKIP_PHRASES):

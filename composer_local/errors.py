@@ -110,7 +110,7 @@ def catch_exceptions(func=None):
             raise
         except Exception as exc:
             try:
-                from google.auth import exceptions as auth_exception
+                from google.auth import exceptions as auth_exception  # type: ignore
 
                 if isinstance(exc, auth_exception.DefaultCredentialsError):
                     raise InvalidAuthError(str(exc)) from exc
