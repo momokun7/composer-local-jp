@@ -100,7 +100,7 @@ def build_mounts(env, include_db: bool):
     mounts = []
     for src, target in m.items():
         mounts.append(
-            docker.types.Mount(
+            docker.types.Mount(  # type: ignore[attr-defined]
                 source=str(src),
                 target=(
                     target if str(target).startswith("/") else f"{constants.AIRFLOW_HOME}/{target}"
