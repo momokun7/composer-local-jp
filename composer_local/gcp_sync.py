@@ -167,8 +167,8 @@ def _auth_result(
     if error_message is None:
         return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
     default_suggestions = [
-        "make auth-user を実行してユーザー認証を更新してください",
-        "make auth-sa を実行してサービスアカウント認証を更新してください",
+        "make auth を実行してユーザー認証を更新してください",
+        "make auth SERVICE_ACCOUNT=... を実行してサービスアカウント認証を更新してください",
     ]
     return {
         "is_valid": False,
@@ -213,7 +213,7 @@ def check_auth_validity() -> Dict[str, Any]:
                 "プロジェクトが設定されていません",
                 [
                     "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
-                    "make auth-user を実行して認証を行ってください",
+                    "make auth を実行して認証を行ってください",
                 ],
             )
 
@@ -615,55 +615,6 @@ class SecretManagerSync:
             diff_lines.append(f'  {constants.ANSI_GREEN}+ "{new_masked}"{constants.ANSI_RESET}')
 
         return "\n".join(diff_lines)
-
-    def sync_to_local_airflow(self, env=None) -> None:
-        """
-        Secret Manager から取得した Variables をローカル Airflow に反映する。
-        Secret Manager に値がある場合は、ローカルの Variables を一度すべて削除してから取り込む。
-
-        Args:
-            env: Environment インスタンス（実行中のコンテナ内のVariables削除用）
-        """
-        variables = self.get_all_variables()
-
-        if not variables:
-            LOG.warning("Secret Manager に Variables が見つかりません")
-            return
-
-        # Secret Manager に値がある場合は、ローカルの Variables を更新
-
-        # 実行中のAirflowコンテナ内のVariablesを更新
-        if env:
-            self.clear_airflow_variables_in_container(env)
-
-        # ローカルのvariables.jsonファイルを更新
-        self.clear_all_local_variables()
-
-        # ローカルの variables.json に書き出し
-        if self.local_env_path:
-            variables_file = self.local_env_path / "data" / "variables.json"
-            variables_file.parent.mkdir(parents=True, exist_ok=True)
-
-            with open(variables_file, "w") as f:
-                json.dump(variables, f, indent=2)
-
-            LOG.info(f"{len(variables)} 件の Variables を保存しました: {variables_file}")
-
-    def clear_all_local_variables(self) -> None:
-        """
-        ローカルの Airflow Variables をすべて削除する。
-        """
-        LOG.info("ローカルの Airflow Variables をすべて削除します")
-
-        # ローカルの variables.json を削除
-        if self.local_env_path:
-            variables_file = self.local_env_path / "data" / "variables.json"
-            if variables_file.exists():
-                try:
-                    variables_file.unlink()
-                    LOG.info(f"ローカルの variables.json を削除しました: {variables_file}")
-                except Exception as e:
-                    LOG.warning(f"variables.json の削除に失敗しました: {e}")
 
     def clear_airflow_variables_in_container(self, env) -> None:
         """
