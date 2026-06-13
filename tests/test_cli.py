@@ -179,35 +179,34 @@ class TestSyncCommandHelp:
 class TestStartAutoCreate:
     """start コマンドの自動作成挙動のテスト."""
 
-    @patch("composer_local.environment.Environment.start_foreground")
     @patch("composer_local.environment.Environment.load_from_config")
     @patch("composer_local.environment.Environment.create")
     @patch("composer_local.cli.files.resolve_environment_path")
     @patch("composer_local.cli.pathlib.Path.is_file", return_value=False)
     def test_creates_environment_when_config_absent(
-        self, mock_is_file, mock_path, mock_create, mock_load, mock_fg, tmp_path
+        self, mock_is_file, mock_path, mock_create, mock_load, tmp_path
     ):
         """config.json が無い場合、create と start_foreground の両方が呼ばれる."""
         mock_path.return_value = tmp_path
         result = _invoke("start", "myenv")
         assert result.exit_code == 0, result.output
         assert mock_create.called
-        assert mock_fg.called
+        # start_foreground は load_from_config が返したインスタンス上で呼ばれる
+        assert mock_load.return_value.start_foreground.called
 
-    @patch("composer_local.environment.Environment.start_foreground")
     @patch("composer_local.environment.Environment.load_from_config")
     @patch("composer_local.environment.Environment.create")
     @patch("composer_local.cli.files.resolve_environment_path")
     @patch("composer_local.cli.pathlib.Path.is_file", return_value=True)
     def test_does_not_create_when_config_present(
-        self, mock_is_file, mock_path, mock_create, mock_load, mock_fg, tmp_path
+        self, mock_is_file, mock_path, mock_create, mock_load, tmp_path
     ):
         """config.json が存在する場合、create は呼ばれず start_foreground のみ呼ばれる."""
         mock_path.return_value = tmp_path
         result = _invoke("start", "myenv")
         assert result.exit_code == 0, result.output
         assert not mock_create.called
-        assert mock_fg.called
+        assert mock_load.return_value.start_foreground.called
 
 
 # =============================================================================
