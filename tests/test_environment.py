@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from composer_local import composer_settings, constants, errors
+from composer_local import composer_settings, constants, docker_ops, errors
 from composer_local.environment import Environment, EnvironmentConfig
 
 # =============================================================================
@@ -382,38 +382,38 @@ class TestEnvironmentDefaultAirflowEnv:
         assert result["COMPOSER_HOST_USER_NAME"] != ""
 
 
-class TestEnvironmentDbEnv:
-    """_db_env メソッドのテスト."""
+class TestBuildDbEnv:
+    """docker_ops.build_db_env 関数のテスト."""
 
-    def test_returns_dict(self, sample_env):
+    def test_returns_dict(self):
         """戻り値が辞書であること."""
-        result = sample_env._db_env()
+        result = docker_ops.build_db_env()
         assert isinstance(result, dict)
 
-    def test_contains_pgdata(self, sample_env):
+    def test_contains_pgdata(self):
         """PGDATA が含まれること."""
-        result = sample_env._db_env()
+        result = docker_ops.build_db_env()
         assert "PGDATA" in result
         assert result["PGDATA"] == "/var/lib/postgresql/data/pgdata"
 
-    def test_contains_postgres_user(self, sample_env):
+    def test_contains_postgres_user(self):
         """POSTGRES_USER が composer_settings の値と一致すること."""
-        result = sample_env._db_env()
+        result = docker_ops.build_db_env()
         assert result["POSTGRES_USER"] == composer_settings.POSTGRES_USER
 
-    def test_contains_postgres_password(self, sample_env):
+    def test_contains_postgres_password(self):
         """POSTGRES_PASSWORD が composer_settings の値と一致すること."""
-        result = sample_env._db_env()
+        result = docker_ops.build_db_env()
         assert result["POSTGRES_PASSWORD"] == composer_settings.POSTGRES_PASSWORD
 
-    def test_contains_postgres_db(self, sample_env):
+    def test_contains_postgres_db(self):
         """POSTGRES_DB が composer_settings の値と一致すること."""
-        result = sample_env._db_env()
+        result = docker_ops.build_db_env()
         assert result["POSTGRES_DB"] == composer_settings.POSTGRES_DB
 
-    def test_has_exactly_four_keys(self, sample_env):
-        """_db_env が正確に 4 つのキーを返すこと."""
-        result = sample_env._db_env()
+    def test_has_exactly_four_keys(self):
+        """build_db_env が正確に 4 つのキーを返すこと."""
+        result = docker_ops.build_db_env()
         assert len(result) == 4
 
 
@@ -454,17 +454,17 @@ class TestEnvironmentPort:
 
 
 # =============================================================================
-# Environment._poll_until_ready のテスト
+# docker_ops.poll_until_ready のテスト
 # =============================================================================
 
 
-class TestEnvironmentPollUntilReady:
-    """_poll_until_ready メソッドのテスト."""
+class TestPollUntilReady:
+    """docker_ops.poll_until_ready 関数のテスト."""
 
-    def test_timeout_raises_error(self, sample_env):
+    def test_timeout_raises_error(self):
         """check_fn が常に False を返す場合、タイムアウトで ComposerCliError が発生すること."""
         with pytest.raises(errors.ComposerCliError, match="テスト用タイムアウト"):
-            sample_env._poll_until_ready(
+            docker_ops.poll_until_ready(
                 check_fn=lambda: False,
                 timeout_seconds=0,
                 interval_seconds=0.01,
@@ -472,10 +472,10 @@ class TestEnvironmentPollUntilReady:
                 timeout_message="テスト用タイムアウト",
             )
 
-    def test_returns_immediately_when_ready(self, sample_env):
+    def test_returns_immediately_when_ready(self):
         """check_fn が即座に True を返す場合、正常に完了すること."""
         # 例外が発生しなければ成功
-        sample_env._poll_until_ready(
+        docker_ops.poll_until_ready(
             check_fn=lambda: True,
             timeout_seconds=5,
             interval_seconds=0.01,
@@ -483,7 +483,7 @@ class TestEnvironmentPollUntilReady:
             timeout_message="テスト用タイムアウト",
         )
 
-    def test_succeeds_after_retries(self, sample_env):
+    def test_succeeds_after_retries(self):
         """check_fn が数回 False を返した後に True を返す場合、正常に完了すること."""
         call_count = {"n": 0}
 
@@ -491,7 +491,7 @@ class TestEnvironmentPollUntilReady:
             call_count["n"] += 1
             return call_count["n"] >= 3
 
-        sample_env._poll_until_ready(
+        docker_ops.poll_until_ready(
             check_fn=check_fn,
             timeout_seconds=5,
             interval_seconds=0.01,
@@ -502,32 +502,32 @@ class TestEnvironmentPollUntilReady:
 
 
 # =============================================================================
-# Environment._wait_for_db_ready のテスト
+# docker_ops.wait_for_db_ready のテスト
 # =============================================================================
 
 
-class TestEnvironmentWaitForDbReady:
-    """_wait_for_db_ready メソッドのテスト."""
+class TestWaitForDbReady:
+    """docker_ops.wait_for_db_ready 関数のテスト."""
 
-    def test_timeout_raises_error(self, sample_env):
+    def test_timeout_raises_error(self):
         """DB が healthy にならない場合、タイムアウトで ComposerCliError が発生すること."""
         mock_db = MagicMock()
         mock_db.attrs = {"State": {"Health": {"Status": "starting"}}}
 
         with pytest.raises(errors.ComposerCliError, match="PostgreSQL"):
-            sample_env._wait_for_db_ready(
+            docker_ops.wait_for_db_ready(
                 mock_db,
                 timeout_seconds=0,
                 interval_seconds=0.01,
             )
 
-    def test_returns_when_healthy(self, sample_env):
+    def test_returns_when_healthy(self):
         """DB が healthy の場合、即座に正常完了すること."""
         mock_db = MagicMock()
         mock_db.attrs = {"State": {"Health": {"Status": "healthy"}}}
 
         # 例外が発生しなければ成功
-        sample_env._wait_for_db_ready(
+        docker_ops.wait_for_db_ready(
             mock_db,
             timeout_seconds=5,
             interval_seconds=0.01,

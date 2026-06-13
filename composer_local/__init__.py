@@ -6,13 +6,15 @@
 
 import sys
 import types
+from typing import Any
 
 # composer_settings.py が存在しない場合でも動作するようにデフォルト値を提供する。
 # これにより GCP 設定なしでもローカル環境を構築・起動できる。
 try:
     from composer_local import composer_settings as _test  # noqa: F401
 except ImportError:
-    _defaults = types.ModuleType("composer_local.composer_settings")
+    # 動的に属性を設定するため Any として宣言（pyright の ModuleType 属性代入エラーを回避）
+    _defaults: Any = types.ModuleType("composer_local.composer_settings")
 
     # ローカル環境設定（デフォルト値）
     _defaults.LOCAL_ENV_NAME = "my-local-env"

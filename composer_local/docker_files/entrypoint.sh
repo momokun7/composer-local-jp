@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC3043  # local は実行環境の /bin/sh(dash/busybox) で利用可能
 
 set -e
 
@@ -58,6 +59,7 @@ init_airflow() {
 
     original_ifs="$IFS"
     IFS='.'
+    # shellcheck disable=SC2086  # IFS='.' でバージョン文字列を意図的に単語分割
     set -- $airflow_version
     major="$1"
     minor="$2"

@@ -79,6 +79,13 @@ dmypy.json
 .mcp.json
 .claude/settings.local.json
 
+# シークレット・認証情報（絶対にコミットしない）
+*-key.json
+service-account*.json
+credentials*.json
+variables*.json
+.secrets.baseline
+
 # Composer Local Development (ignore all)
 composer/
 composer_local/composer_settings.py

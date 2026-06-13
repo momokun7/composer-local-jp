@@ -1,11 +1,9 @@
-import json
 import logging
 import os
 import pathlib
 import re
-import subprocess
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import rich.box
 import rich.table
@@ -15,48 +13,12 @@ from composer_local import constants, errors
 
 LOG = logging.getLogger(__name__)
 
-_CLOUD_CLI_POSIX_COMMAND = "gcloud"
-_CLOUD_CLI_WINDOWS_COMMAND = "gcloud.cmd"
-_CLOUD_CLI_CONFIG_COMMAND = "config config-helper --format json"
-
 LOG_FORMAT = "%(name)s:%(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 
 def is_windows_os() -> bool:
     return os.name == "nt"
-
-
-def gcloud_cmd() -> str:
-    if is_windows_os():
-        return _CLOUD_CLI_WINDOWS_COMMAND
-    return _CLOUD_CLI_POSIX_COMMAND
-
-
-def get_project_id() -> Optional[str]:
-    try:
-        output = subprocess.run(
-            [gcloud_cmd()] + _CLOUD_CLI_CONFIG_COMMAND.split(),
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        LOG.debug("Cloud CLI output: %s", output)
-    except (subprocess.CalledProcessError, OSError, IOError) as err:
-        logging.debug("Failed to get project ID from the Cloud CLI.", exc_info=True)
-        raise errors.InvalidAuthError(err)
-
-    try:
-        configuration = json.loads(output)
-    except ValueError as err:
-        raise errors.ComposerCliError(f"gcloud CLI の設定のデコードに失敗しました: {err}") from None
-
-    try:
-        project_id = configuration["configuration"]["properties"]["core"]["project"]
-        LOG.info("GCP プロジェクトを使用します: %s", project_id)
-        return project_id
-    except KeyError:
-        raise errors.ComposerCliError("gcloud の設定に project id が存在しません。")
 
 
 def resolve_gcloud_config_path() -> str:
@@ -78,7 +40,7 @@ def create_plain_status_text(
     web_url: str,
     image_version: str,
     dags_path: str,
-    auth_description: str,
+    auth_status: str,
     gcloud_path: str,
     width: int = 80,
 ) -> str:
@@ -128,152 +90,10 @@ def create_plain_status_text(
     add_item("イメージバージョン", image_version)
     add_item("DAG ディレクトリ", dags_path)
 
-    # 認証情報の有効性をチェックして表示
-    try:
-        auth_check = check_auth_validity()
-        if auth_check["is_valid"]:
-            auth_status = wrap_auth_status_in_color(auth_description, True)
-        else:
-            auth_status = wrap_auth_status_in_color(auth_check['error_message'], False)
-    except Exception:
-        auth_status = auth_description
-
     add_item("認証情報", auth_status)
     add_item("設定パス", gcloud_path)
 
     return "\n".join(lines)
-
-
-def get_auth_info() -> Dict[str, str]:
-    """現在のgcloud認証情報を取得する"""
-    try:
-        # application_default_credentials.json を確認
-        gcloud_config_path = resolve_gcloud_config_path()
-        adc_path = pathlib.Path(gcloud_config_path) / "application_default_credentials.json"
-
-        if adc_path.exists():
-            try:
-                with open(adc_path, 'r') as f:
-                    adc_data = json.load(f)
-
-                # impersonated_service_account の場合はサービスアカウントの権限借用
-                if adc_data.get("type") == "impersonated_service_account":
-                    service_account_url = adc_data.get("service_account_impersonation_url", "")
-                    # URLからサービスアカウント名を抽出
-                    # URL形式: https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/
-                    # ACCOUNT_EMAIL:generateAccessToken
-                    if "serviceAccounts/" in service_account_url:
-                        account_name = service_account_url.split("serviceAccounts/")[-1].split(":")[
-                            0
-                        ]
-                    else:
-                        account_name = "不明なサービスアカウント"
-
-                    return {
-                        "type": "service_account",
-                        "account": account_name,
-                        "description": f"サービスアカウントの権限借用: {account_name}",
-                    }
-            except (json.JSONDecodeError, KeyError, IOError) as e:
-                LOG.debug("Failed to parse application_default_credentials.json: %s", e)
-
-        # 通常のユーザー認証の場合
-        account_output = subprocess.run(
-            [gcloud_cmd(), "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-
-        return {
-            "type": "user",
-            "account": account_output,
-            "description": f"ユーザー認証: {account_output}",
-        }
-    except (subprocess.CalledProcessError, OSError, IOError) as err:
-        LOG.debug("Failed to get auth info: %s", err)
-        return {"type": "unknown", "account": "不明", "description": "認証情報の取得に失敗しました"}
-
-
-def _auth_result(
-    auth_info: Dict[str, str],
-    error_message: Optional[str] = None,
-    suggestions: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """check_auth_validity の戻り値を組み立てるヘルパー"""
-    if error_message is None:
-        return {"is_valid": True, "auth_info": auth_info, "error_message": None, "suggestions": []}
-    default_suggestions = [
-        "make auth-user を実行してユーザー認証を更新してください",
-        "make auth-sa を実行してサービスアカウント認証を更新してください",
-    ]
-    return {
-        "is_valid": False,
-        "auth_info": auth_info,
-        "error_message": error_message,
-        "suggestions": suggestions or default_suggestions,
-    }
-
-
-def _error_msg_for_returncode(returncode: int) -> str:
-    """returncode に応じた認証エラーメッセージを返す"""
-    if returncode == 1:
-        return "認証トークンの取得に失敗しました（認証情報が無効または期限切れ）"
-    if returncode == 2:
-        return "gcloudコマンドの実行に失敗しました"
-    return f"認証の検証中にエラーが発生しました（終了コード: {returncode}）"
-
-
-def check_auth_validity() -> Dict[str, Any]:
-    """現在の認証情報の有効性をチェックする。
-
-    Returns:
-        Dict[str, Any]: ``is_valid``, ``auth_info``, ``error_message``,
-        ``suggestions`` をキーに持つ辞書。
-    """
-    auth_info = get_auth_info()
-
-    if auth_info.get("type") == "unknown":
-        return _auth_result(auth_info, "認証情報が見つかりません")
-
-    try:
-        project = subprocess.run(
-            [gcloud_cmd(), "config", "get-value", "project"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-
-        if not project:
-            return _auth_result(auth_info, "プロジェクトが設定されていません", [
-                "gcloud config set project PROJECT_ID でプロジェクトを設定してください",
-                "make auth-user を実行して認証を行ってください",
-            ])
-
-        subprocess.run(
-            [gcloud_cmd(), "auth", "print-access-token"],
-            check=True, capture_output=True, text=True,
-        )
-
-        if auth_info.get("type") == "service_account":
-            subprocess.run(
-                [gcloud_cmd(), "iam", "service-accounts", "get-iam-policy",
-                 auth_info.get("account", "")],
-                check=True, capture_output=True, text=True,
-            )
-
-        return _auth_result(auth_info)
-
-    except subprocess.CalledProcessError as e:
-        return _auth_result(auth_info, _error_msg_for_returncode(e.returncode))
-    except FileNotFoundError:
-        return _auth_result(
-            auth_info,
-            "gcloudコマンドが見つかりません"
-            "（Google Cloud SDKがインストールされていない可能性があります）",
-            ["Google Cloud SDKをインストールしてください",
-             "https://cloud.google.com/sdk/docs/install を参照してください"],
-        )
-    except Exception as e:
-        return _auth_result(auth_info, f"予期しないエラーが発生しました: {e}")
 
 
 def assert_environment_name_is_valid(env_name: str):
@@ -359,47 +179,3 @@ def resolve_project_id(project_id: Optional[str]) -> str:
     if project_id is not None:
         return project_id
     return "local-dev"
-
-
-# ---------------------------------------------------------------------------
-# GCP パッケージの遅延インポートヘルパー
-# ---------------------------------------------------------------------------
-
-_GCP_INSTALL_HINT = (
-    "GCP 連携機能には追加パッケージが必要です。\n"
-    "  uv sync --extra gcp\n"
-    "を実行してください。"
-)
-
-
-def require_gcp_secret_manager():
-    """google-cloud-secret-manager パッケージの存在を確認し、モジュールを返す。
-
-    Returns:
-        tuple: (secretmanager モジュール, DefaultCredentialsError 例外クラス)
-
-    Raises:
-        ImportError: パッケージが未インストールの場合
-    """
-    try:
-        from google.auth.exceptions import DefaultCredentialsError
-        from google.cloud import secretmanager
-    except ImportError as _err:
-        raise ImportError(_GCP_INSTALL_HINT) from _err
-    return secretmanager, DefaultCredentialsError
-
-
-def require_gcp_composer():
-    """google-cloud-orchestration-airflow パッケージの存在を確認し、モジュールを返す。
-
-    Returns:
-        service_v1 モジュール
-
-    Raises:
-        ImportError: パッケージが未インストールの場合
-    """
-    try:
-        from google.cloud.orchestration.airflow import service_v1
-    except ImportError as _err:
-        raise ImportError(_GCP_INSTALL_HINT) from _err
-    return service_v1

@@ -73,6 +73,7 @@ class FailedToParseConfigError(InvalidConfigurationError):
 
 class DockerAPIError(ComposerCliError):
     """Docker API との通信で発生するエラー。"""
+
     pass
 
 
@@ -109,7 +110,7 @@ def catch_exceptions(func=None):
             raise
         except Exception as exc:
             try:
-                from google.auth import exceptions as auth_exception
+                from google.auth import exceptions as auth_exception  # type: ignore
 
                 if isinstance(exc, auth_exception.DefaultCredentialsError):
                     raise InvalidAuthError(str(exc)) from exc
@@ -121,17 +122,10 @@ def catch_exceptions(func=None):
             # debug フラグは Click コンテキスト経由で取得する
             # (グループコールバックで設定済み)
             ctx = click.get_current_context(silent=True)
-            debug = (
-                ctx.obj.get("debug", False)
-                if ctx and ctx.obj
-                else kwargs.get("debug", False)
-            )
+            debug = ctx.obj.get("debug", False) if ctx and ctx.obj else kwargs.get("debug", False)
             if debug:
                 raise
-            message = (
-                f"\n致命的なエラーが発生しました: {exc}"
-                + constants.ADD_DEBUG_ON_ERROR_INFO
-            )
+            message = f"\n致命的なエラーが発生しました: {exc}" + constants.ADD_DEBUG_ON_ERROR_INFO
             raise ComposerCliFatalError(message) from exc
 
     return wrapper

@@ -7,7 +7,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 ## 特徴
 
 - **ローカルファースト** - GCP 設定不要でローカル開発可能
-- **簡単セットアップ** - `make import && make start` だけで完全な Airflow 環境を構築（初回は自動作成）
+- **簡単セットアップ** - `make import && make start` だけで完全な Airflow 環境を構築（初回は自動作成）。`make import` は Airflow を含まない軽量な依存関係のみをインストールするため数秒で完了します。
 - **GCP 連携はオプション** - Secret Manager・Airflow Variables（変数）同期が必要な場合のみ設定
 - **Composer 3 対応** - 最新の Airflow 2.10.5 + PostgreSQL
 - **uv による高速な依存関係管理**
@@ -39,7 +39,7 @@ Google Cloud Composer（Apache Airflow）のローカル開発環境を日本語
 git clone https://github.com/momokun7/composer-local-jp.git
 cd composer-local-jp
 
-# 2. 依存関係のインストール（uv sync を実行）
+# 2. 依存関係のインストール（数秒で完了します）
 make import
 
 # 3. 起動（初回は環境作成 + セットアップも自動実行）
@@ -67,7 +67,7 @@ make start
 | 操作 | コマンド | 説明 |
 |------|---------|------|
 | 停止 | `make stop` | コンテナを停止します。データや設定は保持されます |
-| 再起動 | `make start` | 停止した環境をそのまま再起動します |
+| 再起動 | `make restart` | 停止した環境をそのまま再起動します |
 | リセット | `make remove` | 環境を完全に削除します。次回 `make start` で再作成されます |
 
 ### 設定のカスタマイズ（任意）
@@ -93,49 +93,48 @@ make start ENV=staging PORT=8081   # 別ターミナルで
 GCP プロジェクトとの Variables 同期や認証連携が必要な場合は、[GCP 連携ガイド](docs/gcp-integration.md) を参照してください。
 
 ```bash
-# GCP パッケージの追加インストール
-make import-gcp
+# GCP 認証
+make auth
+
+# Variables の同期（GCP パッケージは自動でインストールされます）
+make sync
 ```
 
 ---
 
 ## コマンドリファレンス
 
-### 基本コマンド
+### 基本操作
 
 | コマンド | 説明 | 変更例 |
 |---------|------|-------|
-| `make import` | uv 環境にプロジェクトをインストール | - |
+| `make import` | 依存関係のインストールと pre-commit フックの設定（数秒で完了） | - |
+| `make import-dags` | DAG 開発用に apache-airflow を追加インストール（IDE 補完用） | - |
 | `make start` | 環境を起動（未作成なら自動作成） | `make start PORT=8090` でポート変更 |
 | `make stop` | 環境の停止（コンテナは残る） | - |
+| `make restart` | 環境を再起動 | - |
 | `make status` | 環境の設定とステータスを表示 | - |
-| `make logs` | ログの表示 | `make logs LINES=50` で行数指定 |
-| `make remove` | 環境の削除 | - |
-| `make recreate` | 環境を削除して再作成・起動 | - |
-| `make clean` | `__pycache__` やビルド生成物を削除 | - |
+| `make logs` | ログの表示 | `make logs LINES=50 FOLLOW=1` で行数指定・追従 |
 
 ### GCP 連携コマンド（オプション）
 
-| コマンド | 説明 | 必要な引数 |
-|---------|------|-----------|
-| `make import-gcp` | GCP 連携パッケージをインストール | - |
-| `make auth-user` | GCP ユーザー認証 | `PROJECT=...`（任意） |
-| `make auth-sa` | GCP サービスアカウント認証 | `SERVICE_ACCOUNT=...` |
-| `make sync-vars` | Cloud Composer → ローカルへ Airflow Variables（変数）を同期 | `PROJECT=... LOCATION=... ENV_NAME=...` |
-| `make sync-vars-sm` | Secret Manager 経由で Variables を同期 | `PROJECT=... LOCATION=... ENV_NAME=... SECRET_ID=...` |
-| `make sync-settings` | Cloud Composer の設定を同期 | `PROJECT=... LOCATION=... ENV_NAME=...` |
+| コマンド | 説明 | 主なオプション |
+|---------|------|--------------|
+| `make auth` | GCP ユーザー認証 | `SERVICE_ACCOUNT=sa@proj.iam.gserviceaccount.com` でSA権限借用 |
+| `make sync` | Cloud Composer → ローカルへ Variables を同期 | `PROJECT=...`（任意） |
+| `make sync SECRET_ID=xxx` | Secret Manager 経由で Variables を同期 | `SECRET_ID=your-secret-id` |
+| `make sync SETTINGS=1` | Cloud Composer の設定を composer_settings.py に同期 | - |
 
 詳細は [GCP 連携ガイド](docs/gcp-integration.md) を参照してください。
 
 ### メンテナンスコマンド
 
-| コマンド | 説明 | 必要な引数 |
-|---------|------|-----------|
-| `make test` | テストを実行（pytest） | - |
-| `make lint` | 構文チェック | - |
-| `make format` | コードフォーマット（black + isort） | - |
-| `make setup-connections` | Google Cloud のデフォルト接続を設定 | - |
-| `make create-admin` | Airflow Admin ユーザーを作成 | `USERNAME=... PASSWORD=...`（任意） |
+| コマンド | 説明 |
+|---------|------|
+| `make remove` | 環境の削除 |
+| `make test` | テストを実行（pytest） |
+| `make lint` | lint とフォーマットチェック |
+| `make clean` | `__pycache__` やビルド生成物を削除 |
 
 ---
 
@@ -157,20 +156,43 @@ make import-gcp
 
 ### DAG のデバッグ
 
-`run-airflow` サブコマンドを使って、特定の DAG をコマンドラインからテスト実行できます。
+`run` サブコマンドを使って、コンテナ内で airflow コマンドを直接実行できます。
 
 ```bash
+# DAG 構文エラーの確認
+uv run -- composer-local run <ENV_NAME> -- dags list-import-errors
+
+# DAG の一覧表示
+uv run -- composer-local run <ENV_NAME> -- dags list
+
 # DAG のテスト実行（EXECUTION_DATE は任意の日付）
-make run-airflow -- dags test DAG_ID EXECUTION_DATE
-
-# 例: hello_world_dag を 2025-01-01 で実行
-uv run --active -- composer-local run-airflow my-local-env dags test hello_world_dag 2025-01-01
-
-# DAG のリスト表示
-uv run --active -- composer-local run-airflow my-local-env dags list
+uv run -- composer-local run <ENV_NAME> -- dags test DAG_ID EXECUTION_DATE
 ```
 
 > **Tip**: `dags test` は実際のスケジューラを経由せず単一の DAG Run を実行するため、開発中のデバッグに便利です。
+
+---
+
+## DAG 開発時の IDE 補完（任意）
+
+CLI 本体は Airflow に依存しないため、デフォルトではエディタで `from airflow import DAG` の補完が効きません。DAG を本格的に書く場合は以下を実行してください:
+
+```bash
+make import-dags
+```
+
+これで `apache-airflow`（コンテナと同一バージョン）がローカルの venv に入り、IDE の補完・型チェックが有効になります。日常の環境起動には不要です。
+
+---
+
+## シークレット管理
+
+このリポジトリは多層防御でシークレットのコミット混入を防ぎます:
+
+- `make import` 時に pre-commit フック（gitleaks / private key 検出）が自動で有効化されます
+- CI でも gitleaks スキャンが実行されます
+- 同期した Variables は gitignore 済みの `composer/` 配下にのみ保存されます
+- `composer_settings.py` は gitignore 済みです（コミットされるのは `.example` のみ）
 
 ---
 
@@ -183,11 +205,12 @@ composer-local-jp/
 ├── composer_local/             # メインパッケージ
 │   ├── cli.py                  # CLI コマンド定義
 │   ├── environment.py          # Docker 環境管理
+│   ├── gcp_sync.py             # GCP 連携（Variables/設定同期・認証）
+│   ├── docker_ops.py           # Docker コンテナ操作
 │   ├── constants.py            # 定数・メッセージ
 │   └── docker_files/           # コンテナ内ファイル
 ├── dags/                       # DAG ファイル
 ├── docs/                       # 追加ドキュメント
-├── scripts/                    # ユーティリティスクリプト
 └── tests/                      # テスト
 ```
 
@@ -220,10 +243,6 @@ composer-local-jp/
 ```bash
 git pull && make import
 ```
-
-GCP 連携パッケージを使用している場合は、`make import` の代わりに `make import-gcp` を実行してください。
-
-> **Note**: 破壊的変更がある場合は [CHANGELOG](CHANGELOG.md) を確認してください。
 
 ---
 
@@ -299,15 +318,15 @@ PostgreSQL のポート（デフォルト: 25432）が競合する場合は、`c
 </details>
 
 <details>
-<summary><strong>GCP 認証エラー（sync-vars 実行時）</strong></summary>
+<summary><strong>GCP 認証エラー（make sync 実行時）</strong></summary>
 
 **エラー:** `Permission denied` や `Application Default Credentials not found`
 
 **対処:**
 ```bash
-make auth-user
+make auth
 # サービスアカウントの場合:
-make auth-sa SERVICE_ACCOUNT=xxx@yyy.iam.gserviceaccount.com
+make auth SERVICE_ACCOUNT=xxx@yyy.iam.gserviceaccount.com
 ```
 
 </details>
@@ -329,7 +348,8 @@ make import
 
 1. まず環境を再作成してみてください:
    ```bash
-   make recreate
+   make remove
+   make start
    ```
 
 2. それでも解決しない場合は [Issue](../../issues/new) を作成してください。以下の情報を含めると解決が早くなります:
