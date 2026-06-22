@@ -23,7 +23,7 @@ gcp = [
     "google-cloud-secret-manager>=2.0.0",
 ]
 dag-dev = [
-    "apache-airflow==2.10.5",
+    "apache-airflow==3.2.2",
     "apache-airflow-providers-google>=14.0.0",
 ]
 dev = [
